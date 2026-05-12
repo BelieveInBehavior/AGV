@@ -1,0 +1,11 @@
+.git
+node_modules
+client/node_modules
+server/node_modules
+client/dist
+server/.env
+client/.env
+.env
+npm-debug.log*
+__pycache__
+*.pyc

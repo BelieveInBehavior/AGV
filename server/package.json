@@ -1,0 +1,34 @@
+{
+  "name": "agv-server",
+  "version": "1.0.0",
+  "description": "AGV auth server with MongoDB phone login",
+  "type": "module",
+  "main": "src/app.js",
+  "scripts": {
+    "dev": "nodemon src/app.js",
+    "start": "node src/app.js"
+  },
+  "keywords": [
+    "express",
+    "mongodb",
+    "auth"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@alicloud/dypnsapi20170525": "^2.0.0",
+    "@alicloud/tea-util": "^1.4.11",
+    "@fal-ai/client": "^1.4.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongodb": "^6.17.0",
+    "openai": "^5.12.2",
+    "uuid": "^11.1.0",
+    "ioredis": "^5.4.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}

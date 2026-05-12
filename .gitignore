@@ -1,0 +1,9 @@
+node_modules
+dist
+.env
+client/.env
+server/.env
+npm-debug.log*
+__pycache__/
+*.pyc
+worker/.venv/
