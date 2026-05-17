@@ -13,7 +13,16 @@ Redis 角色:
 """
 
 from celery import Celery
+from celery.signals import worker_process_init
+
 import config
+
+
+@worker_process_init.connect
+def _init_worker_process(**_kwargs):
+    from utils import pipeline_telemetry
+
+    pipeline_telemetry.init_otel()
 
 app = Celery('agv_worker')
 
@@ -28,9 +37,13 @@ app.conf.update(
 
     # 任务路由
     task_routes={
-        'tasks.story_task.*':      {'queue': 'story'},
-        'tasks.storyboard_task.*': {'queue': 'storyboard'},
-        'tasks.image_task.*':      {'queue': 'image'},
+        'tasks.story_task.*':             {'queue': 'story'},
+        'tasks.storyboard_task.*':        {'queue': 'storyboard'},
+        'tasks.beat_prompt_task.*':       {'queue': 'storyboard'},
+        'tasks.transition_task.*':        {'queue': 'storyboard'},
+        'tasks.image_task.*':             {'queue': 'image'},
+        'tasks.reference_image_task.*':   {'queue': 'image'},
+        'tasks.video_task.*':             {'queue': 'video'},
     },
 
     # 可靠性配置

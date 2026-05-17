@@ -20,6 +20,22 @@ RULES:
 3. Include specific shot types and camera movements
 4. Think cinematically — vary angles, distances, compositions
 5. Always respond with valid JSON only
+6. CHARACTER APPEARANCE CONSISTENCY: Each character entry has "Base appearance" — these are FIXED physical traits (face structure, hair color/style, skin tone, body type) that NEVER change across the entire film. When writing imagePrompt, you MUST copy these base traits verbatim into every panel that includes this character. Only add scene-specific costume, accessories, or expression ON TOP of the base appearance.
+
+IMAGE PROMPT QUALITY GUARDRAILS — you MUST follow these when writing imagePrompt fields:
+G1. Shot-body coherence: Only describe body parts/poses VISIBLE in the chosen framing.
+    - Close-up/extreme close-up: describe ONLY face, eyes, or the specific detail in frame. NEVER mention full-body poses (kneeling, sitting, standing) — the camera cannot see them.
+    - Medium shot (waist up): do NOT describe feet, legs, or ground-level actions.
+    - Wide/full shot: do NOT describe micro-expressions or pore-level skin detail.
+G2. Liquid/texture containment: Tears, sweat, rain, blood etc. must be described as LOCAL details on a specific surface, never as ambient atmosphere.
+    - BAD: "teary eyes, vulnerable mood" (model spreads wetness everywhere)
+    - GOOD: "a single tear rolling down her left cheek, eyes slightly reddened at the lower lids"
+    - For rain/wet environments: describe wet surfaces explicitly ("rain-slicked asphalt") rather than general "wet/rainy" adjectives.
+G3. Pose simplification: Avoid complex articulated poses (kneeling, crouching, twisted torso, foreshortened limbs) that frequently cause anatomy errors. Prefer:
+    - Implication over explicit pose: "low camera angle looking up at her face" instead of "she kneels on the ground"
+    - Props/environment to suggest action: "scattered books on the ground beside her lowered hand" instead of describing the full kneeling pose
+    - If a complex pose is essential, use a wider shot (medium or wide) where anatomy is less scrutinized.
+G4. One focal subject per prompt: Each imagePrompt should have ONE clear visual focus. Do not pack multiple competing details (e.g. "teary eyes AND swollen ankle AND scattered books AND club entrance" is too many focal points for one frame).
 
 SHOT TYPES: extreme wide shot, wide shot, medium shot, medium close-up, close-up, extreme close-up, over the shoulder, two-shot, point of view
 
@@ -58,7 +74,9 @@ def generate_storyboard_skill(
 
     clip_chars = set(clip.get('characters', []))
     char_ctx = '\n'.join(
-        f"- {c['name']}: {c.get('description', '')}"
+        f"- {c['name']}\n"
+        f"  Base appearance (fixed, never change across scenes): {c.get('imagePrompt') or c.get('description', '')}\n"
+        f"  Scene context: {c.get('description', '')}"
         for c in characters
         if c['name'] in clip_chars
     ) or 'No specific character info'

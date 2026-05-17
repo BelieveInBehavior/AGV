@@ -19,6 +19,8 @@ export async function connectDB() {
   const projects = db.collection('projects');
   await projects.createIndex({ projectId: 1 }, { unique: true });
   await projects.createIndex({ userId: 1 });
+  // 列表页按用户 + 更新时间排序；远程库 projects 文档可能很大，复合索引避免全表扫描与排序超时
+  await projects.createIndex({ userId: 1, updatedAt: -1 });
 
   const episodes = db.collection('episodes');
   await episodes.createIndex({ episodeId: 1 }, { unique: true });

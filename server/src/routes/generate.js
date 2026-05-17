@@ -40,8 +40,8 @@ router.post('/story', async (req, res) => {
   }
 });
 
-// ── POST /api/generate/storyboard — 触发分镜生成 ─────────────────────
-router.post('/storyboard', async (req, res) => {
+// ── POST /api/generate/beat-prompts — 首尾帧 Prompt（LLM，不生图）──────
+router.post('/beat-prompts', async (req, res) => {
   try {
     const db = getDB();
     const { projectId, episodeId, clipIds } = req.body;
@@ -53,10 +53,39 @@ router.post('/storyboard', async (req, res) => {
     if (!project) return res.status(404).json({ success: false, message: '项目不存在' });
 
     const taskId = await enqueueTask({
-      type: 'STORYBOARD_GEN',
+      type: 'BEAT_PROMPT_GEN',
       projectId,
       episodeId,
       payload: { clipIds: clipIds || [] },
+    });
+
+    res.json({ success: true, taskId });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ── POST /api/generate/storyboard — 触发分镜生成 ─────────────────────
+router.post('/storyboard', async (req, res) => {
+  try {
+    const db = getDB();
+    const { projectId, episodeId, clipIds, storyboardMode } = req.body;
+    const mode =
+      storyboardMode === 'beat_frames' || storyboardMode === 'panels' || storyboardMode === 'auto'
+        ? storyboardMode
+        : 'auto';
+    if (!projectId || !episodeId) {
+      return res.status(400).json({ success: false, message: 'projectId 和 episodeId 必填' });
+    }
+
+    const project = await db.collection('projects').findOne({ projectId, userId: req.userId });
+    if (!project) return res.status(404).json({ success: false, message: '项目不存在' });
+
+    const taskId = await enqueueTask({
+      type: 'STORYBOARD_GEN',
+      projectId,
+      episodeId,
+      payload: { clipIds: clipIds || [], storyboardMode: mode },
     });
 
     res.json({ success: true, taskId });
@@ -82,6 +111,31 @@ router.post('/images', async (req, res) => {
       projectId,
       episodeId: episodeId || null,
       payload: { panelIds: panelIds || [], panelId: panelId || null },
+    });
+
+    res.json({ success: true, taskId });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ── POST /api/generate/videos — 触发视频生成 ─────────────────────────
+router.post('/videos', async (req, res) => {
+  try {
+    const db = getDB();
+    const { projectId, episodeId, clipIds } = req.body;
+    if (!projectId || !episodeId) {
+      return res.status(400).json({ success: false, message: 'projectId 和 episodeId 必填' });
+    }
+
+    const project = await db.collection('projects').findOne({ projectId, userId: req.userId });
+    if (!project) return res.status(404).json({ success: false, message: '项目不存在' });
+
+    const taskId = await enqueueTask({
+      type: 'VIDEO_GENERATION',
+      projectId,
+      episodeId,
+      payload: { clipIds: clipIds || [] },
     });
 
     res.json({ success: true, taskId });

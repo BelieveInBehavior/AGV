@@ -18,6 +18,8 @@ RULES:
 4. Split the story into 3-8 meaningful dramatic clips (scenes/sequences)
 5. Each clip should be a self-contained dramatic unit
 6. Keep character names in their original language
+7. For each character, generate an imagePrompt that describes their VISUAL appearance in detail (face features, hair, body type, clothing, accessories, age, ethnicity). This should be a text-to-image prompt optimized for AI image generation, NOT a narrative description. Write in English.
+8. For each location, generate an imagePrompt that describes the VISUAL scene in detail (architecture, lighting, weather, props, ambient objects, NPCs/background figures if any, color palette, atmosphere). This should be a text-to-image prompt optimized for AI image generation, NOT a narrative description. Write in English.
 
 OUTPUT FORMAT (JSON):
 {
@@ -26,13 +28,15 @@ OUTPUT FORMAT (JSON):
       "name": "character name",
       "aliases": ["alternative names"],
       "description": "brief description of appearance, personality",
-      "role": "protagonist|antagonist|supporting"
+      "role": "protagonist|antagonist|supporting",
+      "imagePrompt": "detailed visual prompt for AI image generation: full body, neutral pose, studio background. Include specific details about face, hair color/style, eye color, skin tone, height/build, clothing, accessories, age appearance, distinguishing features"
     }
   ],
   "locations": [
     {
       "name": "location name",
-      "description": "brief description of the place and atmosphere"
+      "description": "brief description of the place and atmosphere",
+      "imagePrompt": "detailed visual prompt for AI image generation: wide establishing shot, no main characters. Include architecture style, lighting conditions, weather, key props/furniture, ambient NPCs or background figures if relevant, color palette, mood/atmosphere, time of day"
     }
   ],
   "clips": [
@@ -42,10 +46,16 @@ OUTPUT FORMAT (JSON):
       "summary": "one-sentence summary of what happens",
       "characters": ["character names involved"],
       "location": "location name",
-      "mood": "tense|romantic|action|mystery|peaceful|dramatic"
+      "mood": "tense|romantic|action|mystery|peaceful|dramatic",
+      "sceneComplexity": "simple|complex"
     }
   ]
-}`;
+}
+
+For each clip, sceneComplexity MUST be:
+- "complex" if the clip has fast action, fights/chases, many characters moving at once, or many distinct visual beats that are hard to bridge with only two keyframes
+- "simple" otherwise (dialogue-heavy, static tension, single clear before/after state)
+`;
 
 /**
  * @param {{ text: string, language?: 'zh'|'en' }} params

@@ -95,10 +95,30 @@ export const CeleryTasks = {
     });
   },
 
-  async generateStoryboard({ taskId, episodeId, projectId, clipIds = [] }) {
+  async generateBeatPrompts({ taskId, episodeId, projectId, clipIds = [] }) {
+    return publishCeleryTask({
+      taskName: 'tasks.beat_prompt_task.generate_beat_prompts',
+      kwargs: {
+        task_id: taskId,
+        episode_id: episodeId,
+        project_id: projectId,
+        clip_ids: clipIds,
+      },
+      queue: 'storyboard',
+      taskId,
+    });
+  },
+
+  async generateStoryboard({ taskId, episodeId, projectId, clipIds = [], storyboardMode = 'auto' }) {
     return publishCeleryTask({
       taskName: 'tasks.storyboard_task.generate_storyboard',
-      kwargs: { task_id: taskId, episode_id: episodeId, project_id: projectId, clip_ids: clipIds },
+      kwargs: {
+        task_id: taskId,
+        episode_id: episodeId,
+        project_id: projectId,
+        clip_ids: clipIds,
+        storyboard_mode: storyboardMode,
+      },
       queue: 'storyboard',
       taskId,
     });
@@ -115,6 +135,20 @@ export const CeleryTasks = {
         panel_id: panelId,
       },
       queue: 'image',
+      taskId,
+    });
+  },
+
+  async generateVideos({ taskId, projectId, episodeId, clipIds = [] }) {
+    return publishCeleryTask({
+      taskName: 'tasks.video_task.generate_videos',
+      kwargs: {
+        task_id: taskId,
+        project_id: projectId,
+        episode_id: episodeId || null,
+        clip_ids: clipIds,
+      },
+      queue: 'video',
       taskId,
     });
   },

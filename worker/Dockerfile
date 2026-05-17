@@ -4,8 +4,9 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
+ENV PYTHONPATH=/app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
-CMD ["celery", "-A", "celery_app", "worker", "-Q", "story,storyboard,image", "--loglevel=INFO"]
+CMD ["celery", "-A", "celery_app", "worker", "-Q", "story,storyboard,image,video", "--loglevel=INFO"]

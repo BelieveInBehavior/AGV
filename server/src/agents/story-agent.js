@@ -73,20 +73,26 @@ export async function runStoryAgent(taskId) {
     );
 
     // 创建 clips 文档
-    const clipDocs = clips.map((clip, i) => ({
-      clipId: `clip_${uuidv4().replace(/-/g, '').slice(0, 12)}`,
-      episodeId,
-      projectId,
-      clipIndex: clip.clipIndex ?? i,
-      content: clip.content || '',
-      summary: clip.summary || '',
-      characters: clip.characters || [],
-      location: clip.location || '',
-      mood: clip.mood || '',
-      panels: [], // 由 storyboard agent 填充
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    }));
+    const clipDocs = clips.map((clip, i) => {
+      let complexity = clip.sceneComplexity || 'simple';
+      if (complexity !== 'simple' && complexity !== 'complex') complexity = 'simple';
+      return {
+        clipId: `clip_${uuidv4().replace(/-/g, '').slice(0, 12)}`,
+        episodeId,
+        projectId,
+        clipIndex: clip.clipIndex ?? i,
+        content: clip.content || '',
+        summary: clip.summary || '',
+        characters: clip.characters || [],
+        location: clip.location || '',
+        mood: clip.mood || '',
+        sceneComplexity: complexity,
+        storyboardPlan: null,
+        panelIds: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+    });
 
     // 先删除旧的 clips（如果是重新生成）
     await db.collection('clips').deleteMany({ episodeId });
@@ -137,12 +143,14 @@ export async function runStoryAgent(taskId) {
   }
 }
 
-/** 合并两个数组，按 name 去重（已有的优先） */
+/** 合并两个数组，按 name 去重（已有的优先，但补填 imagePrompt） */
 function mergeByName(existing, incoming) {
   const map = new Map(existing.map((item) => [item.name, item]));
   for (const item of incoming) {
     if (!map.has(item.name)) {
       map.set(item.name, item);
+    } else if (!map.get(item.name).imagePrompt && item.imagePrompt) {
+      map.set(item.name, { ...map.get(item.name), imagePrompt: item.imagePrompt });
     }
   }
   return Array.from(map.values());

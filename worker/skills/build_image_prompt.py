@@ -42,6 +42,8 @@ def build_image_prompt(
     panel: dict,
     art_style: str = 'cinematic',
     aspect_ratio: str = '16:9',
+    *,
+    prompt_suffix: str = '',
 ) -> tuple[str, str]:
     """
     构建优化的图像生成提示词
@@ -74,6 +76,9 @@ def build_image_prompt(
         parts.append(f'{mood} mood, {mood} atmosphere')
 
     parts.append('high quality, detailed, professional composition')
+
+    if prompt_suffix and str(prompt_suffix).strip():
+        parts.append(str(prompt_suffix).strip())
 
     positive = ', '.join(p for p in parts if p)
     negative = (

@@ -20,7 +20,8 @@ services:
   mongo:
     image: mongo:7
     ports:
-      - "27017:27017"
+      # 避免与本机已有 Mongo（如其它容器占用 27017）冲突；容器内仍为 27017，api/worker 用服务名 mongo 连接
+      - "27018:27017"
     environment:
       MONGO_INITDB_DATABASE: agv
     volumes:
@@ -37,16 +38,21 @@ services:
     env_file:
       - path: .env
         required: false
+      # 与本地 `cd server && npm run dev` 一致；库名等仍可读 server/.env
+      - path: server/.env
+        required: false
     environment:
+      # 强制走 Compose 内 mongo，避免 server/.env 里残留远程 IP 导致容器连 212.x 失败
       MONGODB_URI: mongodb://mongo:27017
       REDIS_URL: redis://redis:6379/0
       CWEI_PORT: 3001
     ports:
-      - "3001:3001"
+      # 若本机已在 3001 跑 `npm run dev`，Docker API 改用 3011，避免 bind 失败
+      - "3011:3001"
     depends_on:
-      redis:
-        condition: service_healthy
       mongo:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3001/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -60,13 +66,15 @@ services:
     env_file:
       - path: .env
         required: false
+      - path: server/.env
+        required: false
     environment:
       MONGODB_URI: mongodb://mongo:27017
       REDIS_URL: redis://redis:6379/0
     depends_on:
-      redis:
-        condition: service_healthy
       mongo:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
 

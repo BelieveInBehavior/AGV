@@ -8,8 +8,20 @@ from typing import Any
 import config
 
 
+def _default_image_caps(provider: str) -> tuple[bool, int]:
+    p = (provider or '').lower()
+    if p == 'gemini':
+        return True, 6
+    if p == 'doubao':
+        return True, 4
+    # fal / none / 其他
+    return False, 1
+
+
 def get_default_ai_settings() -> dict[str, Any]:
     """进程级默认（.env / worker/config）"""
+    img_provider = 'fal' if (config.FAL_API_KEY or '') else 'none'
+    sup, mx = _default_image_caps(img_provider)
     return {
         'llm': {
             'baseUrl': (config.LLM_BASE_URL or '').strip().rstrip('/') or 'https://api.openai.com/v1',
@@ -17,9 +29,11 @@ def get_default_ai_settings() -> dict[str, Any]:
             'model': config.LLM_MODEL or 'gpt-4o-mini',
         },
         'image': {
-            'provider': 'fal' if (config.FAL_API_KEY or '') else 'none',
+            'provider': img_provider,
             'apiKey': config.FAL_API_KEY or '',
             'model': config.FAL_IMAGE_MODEL or 'fal-ai/flux/schnell',
+            'supportsMultiReference': sup,
+            'maxReferenceImages': mx,
         },
         'video': {
             'baseUrl': (config.VIDEO_API_BASE_URL or '').strip().rstrip('/') or '',
@@ -46,12 +60,26 @@ def _merge_image(doc: dict | None, base: dict) -> dict:
     out = copy.deepcopy(base['image'])
     if not doc:
         return out
-    if doc.get('imageProvider') in ('fal', 'none'):
+    if doc.get('imageProvider') in ('fal', 'none', 'gemini', 'doubao'):
         out['provider'] = doc['imageProvider']
     if doc.get('imageApiKey'):
         out['apiKey'] = str(doc['imageApiKey']).strip()
     if doc.get('imageModel'):
         out['model'] = str(doc['imageModel']).strip()
+
+    sup, mx = _default_image_caps(out.get('provider') or 'fal')
+    if doc.get('imageSupportsMultiReference') is not None:
+        v = doc['imageSupportsMultiReference']
+        out['supportsMultiReference'] = bool(v) if not isinstance(v, str) else v.lower() in ('1', 'true', 'yes')
+    else:
+        out['supportsMultiReference'] = sup
+    if doc.get('imageMaxReferenceImages') is not None:
+        try:
+            out['maxReferenceImages'] = max(1, int(doc['imageMaxReferenceImages']))
+        except (TypeError, ValueError):
+            out['maxReferenceImages'] = mx
+    else:
+        out['maxReferenceImages'] = mx
     return out
 
 

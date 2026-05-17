@@ -18,6 +18,21 @@ RULES:
 4. Think cinematically — vary angles, distances, compositions
 5. Always respond with valid JSON only
 
+IMAGE PROMPT QUALITY GUARDRAILS — you MUST follow these when writing imagePrompt fields:
+G1. Shot-body coherence: Only describe body parts/poses VISIBLE in the chosen framing.
+    - Close-up/extreme close-up: describe ONLY face, eyes, or the specific detail in frame. NEVER mention full-body poses (kneeling, sitting, standing) — the camera cannot see them.
+    - Medium shot (waist up): do NOT describe feet, legs, or ground-level actions.
+    - Wide/full shot: do NOT describe micro-expressions or pore-level skin detail.
+G2. Liquid/texture containment: Tears, sweat, rain, blood etc. must be described as LOCAL details on a specific surface, never as ambient atmosphere.
+    - BAD: "teary eyes, vulnerable mood" (model spreads wetness everywhere)
+    - GOOD: "a single tear rolling down her left cheek, eyes slightly reddened at the lower lids"
+    - For rain/wet environments: describe wet surfaces explicitly ("rain-slicked asphalt") rather than general "wet/rainy" adjectives.
+G3. Pose simplification: Avoid complex articulated poses (kneeling, crouching, twisted torso, foreshortened limbs) that frequently cause anatomy errors. Prefer:
+    - Implication over explicit pose: "low camera angle looking up at her face" instead of "she kneels on the ground"
+    - Props/environment to suggest action: "scattered books on the ground beside her lowered hand" instead of describing the full kneeling pose
+    - If a complex pose is essential, use a wider shot (medium or wide) where anatomy is less scrutinized.
+G4. One focal subject per prompt: Each imagePrompt should have ONE clear visual focus. Do not pack multiple competing details (e.g. "teary eyes AND swollen ankle AND scattered books AND club entrance" is too many focal points for one frame).
+
 SHOT TYPES: extreme wide shot, wide shot, medium shot, medium close-up, close-up, extreme close-up, over the shoulder, two-shot, point of view
 
 CAMERA MOVEMENTS: static, pan left/right, tilt up/down, dolly in/out, crane up/down, tracking shot, handheld, zoom in/out

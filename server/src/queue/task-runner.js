@@ -14,12 +14,13 @@ import { v4 as uuidv4 } from 'uuid';
 import { getDB } from '../utils/db.js';
 import { setTaskHot } from '../utils/redis.js';
 import { CeleryTasks } from '../utils/celery-publisher.js';
+import { emitStoryAnalysisEnqueuedSpan, logPipelineEvent } from '../utils/pipeline-telemetry.js';
 
 /**
  * 创建并发布任务
  *
  * @param {{
- *   type: 'STORY_ANALYSIS'|'STORYBOARD_GEN'|'IMAGE_GENERATION',
+ *   type: 'STORY_ANALYSIS'|'BEAT_PROMPT_GEN'|'STORYBOARD_GEN'|'IMAGE_GENERATION'|'VIDEO_GENERATION',
  *   projectId: string,
  *   episodeId?: string,
  *   payload?: object
@@ -55,6 +56,29 @@ export async function enqueueTask({ type, projectId, episodeId, payload = {} }) 
     projectId,
   });
 
+  if (type === 'STORY_ANALYSIS' && episodeId) {
+    await getDB().collection('episodes').updateOne(
+      { episodeId },
+      {
+        $set: {
+          'pipelineMetrics.storyAnalysisTaskId': taskId,
+          'pipelineMetrics.storyAnalysisSubmittedAt': now,
+          'pipelineMetrics.storyAnalysisCompletedAt': null,
+          'pipelineMetrics.firstBeatFrameImageCompletedAt': null,
+          'pipelineMetrics.storyToFirstFrameImageMs': null,
+        },
+      },
+    );
+    logPipelineEvent({
+      event: 'story_analysis_enqueued',
+      taskId,
+      episodeId,
+      projectId,
+      taskType: type,
+    });
+    emitStoryAnalysisEnqueuedSpan({ 'episode.id': episodeId, 'project.id': projectId, 'task.id': taskId });
+  }
+
   // ── 3. 发布到 Celery Redis Broker ────────────────────────────────
   try {
     switch (type) {
@@ -66,12 +90,22 @@ export async function enqueueTask({ type, projectId, episodeId, payload = {} }) 
         });
         break;
 
+      case 'BEAT_PROMPT_GEN':
+        await CeleryTasks.generateBeatPrompts({
+          taskId,
+          episodeId,
+          projectId,
+          clipIds: payload.clipIds || [],
+        });
+        break;
+
       case 'STORYBOARD_GEN':
         await CeleryTasks.generateStoryboard({
           taskId,
           episodeId,
           projectId,
           clipIds: payload.clipIds || [],
+          storyboardMode: payload.storyboardMode || 'auto',
         });
         break;
 
@@ -82,6 +116,15 @@ export async function enqueueTask({ type, projectId, episodeId, payload = {} }) 
           episodeId: episodeId || null,
           panelIds: payload.panelIds || [],
           panelId: payload.panelId || null,
+        });
+        break;
+
+      case 'VIDEO_GENERATION':
+        await CeleryTasks.generateVideos({
+          taskId,
+          projectId,
+          episodeId: episodeId || null,
+          clipIds: payload.clipIds || [],
         });
         break;
 

@@ -17,6 +17,7 @@ from skills.analyze_story import analyze_story_skill
 from utils.ai_settings import get_ai_settings_for_project
 from utils.db import get_db
 from utils.redis_client import publish_progress, publish_complete, publish_error, set_task_state
+from utils import pipeline_telemetry
 
 
 @app.task(
@@ -75,16 +76,20 @@ def analyze_story(self, task_id: str, episode_id: str, project_id: str, **kwargs
 
         # ── 冷数据: 写回 MongoDB ──────────────────────────────────────
 
-        # 合并角色和场景（不覆盖已有数据）
+        # 合并角色和场景（不覆盖已有数据，但补填 imagePrompt）
         existing_chars = {c['name']: c for c in (project.get('characters', []) if project else [])}
         for c in characters:
             if c['name'] not in existing_chars:
                 existing_chars[c['name']] = c
+            elif not existing_chars[c['name']].get('imagePrompt') and c.get('imagePrompt'):
+                existing_chars[c['name']]['imagePrompt'] = c['imagePrompt']
 
         existing_locs = {l['name']: l for l in (project.get('locations', []) if project else [])}
         for l in locations:
             if l['name'] not in existing_locs:
                 existing_locs[l['name']] = l
+            elif not existing_locs[l['name']].get('imagePrompt') and l.get('imagePrompt'):
+                existing_locs[l['name']]['imagePrompt'] = l['imagePrompt']
 
         db.projects.update_one(
             {'projectId': project_id},
@@ -101,6 +106,9 @@ def analyze_story(self, task_id: str, episode_id: str, project_id: str, **kwargs
         clip_docs = []
         for i, clip in enumerate(clips):
             clip_id = f"clip_{uuid4().hex[:12]}"
+            complexity = clip.get('sceneComplexity', 'simple')
+            if complexity not in ('simple', 'complex'):
+                complexity = 'simple'
             clip_docs.append({
                 'clipId': clip_id,
                 'episodeId': episode_id,
@@ -111,6 +119,8 @@ def analyze_story(self, task_id: str, episode_id: str, project_id: str, **kwargs
                 'characters': clip.get('characters', []),
                 'location': clip.get('location', ''),
                 'mood': clip.get('mood', ''),
+                'sceneComplexity': complexity,
+                'storyboardPlan': None,
                 'panelIds': [],
                 'createdAt': now,
                 'updatedAt': now,
@@ -131,7 +141,13 @@ def analyze_story(self, task_id: str, episode_id: str, project_id: str, **kwargs
             'characterCount': len(existing_chars),
             'locationCount': len(existing_locs),
         }
+        completed_at = datetime.now(timezone.utc)
+        pipeline_telemetry.record_story_analysis_completed(db, episode_id, task_id, project_id, completed_at)
         publish_complete(task_id, result_data)
+
+        # ── 自动触发参考图生成（有 imagePrompt 但无 referenceImageUrl 的角色/场景）────
+        _auto_enqueue_reference_images(db, project_id)
+
         return result_data
 
     except Exception as exc:
@@ -146,3 +162,33 @@ def analyze_story(self, task_id: str, episode_id: str, project_id: str, **kwargs
 
         publish_error(task_id, err_msg)
         raise exc
+
+
+def _auto_enqueue_reference_images(db, project_id: str):
+    """
+    检查项目角色/场景：有 imagePrompt 但无 referenceImageUrl 时，
+    自动派发参考图生成任务（fire-and-forget，失败不影响主流程）。
+    """
+    try:
+        project = db.projects.find_one({'projectId': project_id})
+        if not project:
+            return
+
+        needs_ref = any(
+            c.get('imagePrompt') and not (c.get('referenceImageUrl') or '').strip()
+            for c in project.get('characters', [])
+        ) or any(
+            l.get('imagePrompt') and not (l.get('referenceImageUrl') or '').strip()
+            for l in project.get('locations', [])
+        )
+        if not needs_ref:
+            return
+
+        from tasks.reference_image_task import generate_reference_images
+        ref_task_id = f'task_ref_{uuid4().hex[:12]}'
+        generate_reference_images.apply_async(
+            kwargs={'task_id': ref_task_id, 'project_id': project_id},
+            queue='image',
+        )
+    except Exception:
+        pass  # 参考图自动生成失败不阻断主流程

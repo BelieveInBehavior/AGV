@@ -14,8 +14,10 @@ router.use(authMiddleware);
 /** Celery Redis 队列名（与 server/src/utils/celery-publisher.js、worker 一致） */
 const CELERY_QUEUE_BY_TYPE = {
   STORY_ANALYSIS: 'story',
+  BEAT_PROMPT_GEN: 'storyboard',
   STORYBOARD_GEN: 'storyboard',
   IMAGE_GENERATION: 'image',
+  VIDEO_GENERATION: 'video',
 };
 
 async function getCeleryQueueHint(taskType) {

@@ -1,22 +1,36 @@
-import { getToken } from './auth';
-import type { Project, Episode, Clip, Task, SseEvent } from '../types/project';
-
-const API = '/api';
+import { API_BASE } from '../config/api';
+import { getToken, assertApiAuthorized, ensureSessionValid, forceRelogin } from './auth';
+import type { Project, Episode, Clip, Task, SseEvent, StoryboardMode } from '../types/project';
 
 function authHeaders() {
   return { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` };
 }
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(url, { headers: authHeaders(), ...options });
-  const data = await res.json();
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      ...authHeaders(),
+      ...(options?.headers as Record<string, string> | undefined),
+    },
+  });
+  let data: T & { success?: boolean; message?: string };
+  try {
+    data = (await res.json()) as T & { success?: boolean; message?: string };
+  } catch {
+    if (res.status === 401) {
+      forceRelogin();
+    }
+    throw new Error('Request failed');
+  }
+  assertApiAuthorized(res, data);
   if (!data.success) throw new Error(data.message || 'Request failed');
   return data as T;
 }
 
 // ── Projects ──────────────────────────────────────────────────────────
 export async function listProjects(): Promise<Project[]> {
-  const data = await request<{ projects: Project[] }>(`${API}/projects`);
+  const data = await request<{ projects: Project[] }>(`${API_BASE}/projects`);
   return data.projects;
 }
 
@@ -27,7 +41,7 @@ export async function createProject(body: {
   videoRatio?: string;
   language?: string;
 }): Promise<Project> {
-  const data = await request<{ project: Project }>(`${API}/projects`, {
+  const data = await request<{ project: Project }>(`${API_BASE}/projects`, {
     method: 'POST',
     body: JSON.stringify(body),
   });
@@ -35,13 +49,66 @@ export async function createProject(body: {
 }
 
 export async function getProject(projectId: string): Promise<Project> {
-  const data = await request<{ project: Project }>(`${API}/projects/${projectId}`);
+  const data = await request<{ project: Project }>(`${API_BASE}/projects/${projectId}`);
   return data.project;
+}
+
+export async function patchProjectReferences(
+  projectId: string,
+  body: {
+    characters?: { name: string; referenceImageUrl?: string | null; imagePrompt?: string }[];
+    locations?: { name: string; referenceImageUrl?: string | null; imagePrompt?: string }[];
+    episodeId?: string;
+  },
+): Promise<Project> {
+  const data = await request<{ project: Project }>(`${API_BASE}/projects/${projectId}/references`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+  return data.project;
+}
+
+export async function generateProjectReferenceImage(
+  projectId: string,
+  body: { kind: 'character' | 'location'; name: string; episodeId?: string },
+): Promise<{ project: Project; imageUrl: string }> {
+  const data = await request<{ project: Project; imageUrl: string }>(
+    `${API_BASE}/projects/${projectId}/references/generate`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+  return { project: data.project, imageUrl: data.imageUrl };
+}
+
+export async function patchClip(
+  projectId: string,
+  episodeId: string,
+  clipId: string,
+  body: {
+    referenceOverrides?: Clip['referenceOverrides'] | null;
+    beatPrompts?: {
+      first_frame?: {
+        scene_prompt?: string;
+        description?: string;
+        characters?: { name: string; outfit: string; emotion: string }[];
+      };
+      last_frame?: {
+        scene_prompt?: string;
+        description?: string;
+        characters?: { name: string; outfit: string; emotion: string }[];
+      };
+    };
+  },
+): Promise<Clip> {
+  const data = await request<{ clip: Clip }>(
+    `${API_BASE}/projects/${projectId}/episodes/${episodeId}/clips/${clipId}`,
+    { method: 'PATCH', body: JSON.stringify(body) },
+  );
+  return data.clip;
 }
 
 // ── Episodes ─────────────────────────────────────────────────────────
 export async function listEpisodes(projectId: string): Promise<Episode[]> {
-  const data = await request<{ episodes: Episode[] }>(`${API}/projects/${projectId}/episodes`);
+  const data = await request<{ episodes: Episode[] }>(`${API_BASE}/projects/${projectId}/episodes`);
   return data.episodes;
 }
 
@@ -49,7 +116,7 @@ export async function createEpisode(
   projectId: string,
   body: { title?: string; novelText: string }
 ): Promise<Episode> {
-  const data = await request<{ episode: Episode }>(`${API}/projects/${projectId}/episodes`, {
+  const data = await request<{ episode: Episode }>(`${API_BASE}/projects/${projectId}/episodes`, {
     method: 'POST',
     body: JSON.stringify(body),
   });
@@ -59,16 +126,29 @@ export async function createEpisode(
 // ── Clips & Panels ───────────────────────────────────────────────────
 export async function listClips(projectId: string, episodeId: string): Promise<Clip[]> {
   const data = await request<{ clips: Clip[] }>(
-    `${API}/projects/${projectId}/episodes/${episodeId}/clips`
+    `${API_BASE}/projects/${projectId}/episodes/${episodeId}/clips`
   );
   return data.clips;
 }
 
 // ── Generate ─────────────────────────────────────────────────────────
 export async function generateStory(projectId: string, episodeId: string): Promise<string> {
-  const data = await request<{ taskId: string }>(`${API}/generate/story`, {
+  const data = await request<{ taskId: string }>(`${API_BASE}/generate/story`, {
     method: 'POST',
     body: JSON.stringify({ projectId, episodeId }),
+  });
+  return data.taskId;
+}
+
+/** 情节分析之后：仅 LLM 生成首尾帧 storyboardPlan（含 scene_prompt） */
+export async function generateBeatPrompts(
+  projectId: string,
+  episodeId: string,
+  clipIds?: string[]
+): Promise<string> {
+  const data = await request<{ taskId: string }>(`${API_BASE}/generate/beat-prompts`, {
+    method: 'POST',
+    body: JSON.stringify({ projectId, episodeId, clipIds }),
   });
   return data.taskId;
 }
@@ -76,11 +156,16 @@ export async function generateStory(projectId: string, episodeId: string): Promi
 export async function generateStoryboard(
   projectId: string,
   episodeId: string,
-  clipIds?: string[]
+  options?: { clipIds?: string[]; storyboardMode?: StoryboardMode }
 ): Promise<string> {
-  const data = await request<{ taskId: string }>(`${API}/generate/storyboard`, {
+  const data = await request<{ taskId: string }>(`${API_BASE}/generate/storyboard`, {
     method: 'POST',
-    body: JSON.stringify({ projectId, episodeId, clipIds }),
+    body: JSON.stringify({
+      projectId,
+      episodeId,
+      clipIds: options?.clipIds,
+      storyboardMode: options?.storyboardMode ?? 'auto',
+    }),
   });
   return data.taskId;
 }
@@ -90,29 +175,52 @@ export async function generateImages(
   episodeId?: string,
   panelIds?: string[]
 ): Promise<string> {
-  const data = await request<{ taskId: string }>(`${API}/generate/images`, {
+  const data = await request<{ taskId: string }>(`${API_BASE}/generate/images`, {
     method: 'POST',
     body: JSON.stringify({ projectId, episodeId, panelIds }),
   });
   return data.taskId;
 }
 
+export async function generateVideos(
+  projectId: string,
+  episodeId: string,
+  clipIds?: string[]
+): Promise<string> {
+  const data = await request<{ taskId: string }>(`${API_BASE}/generate/videos`, {
+    method: 'POST',
+    body: JSON.stringify({ projectId, episodeId, clipIds }),
+  });
+  return data.taskId;
+}
+
 // ── Tasks ────────────────────────────────────────────────────────────
 export async function getTask(taskId: string): Promise<Task> {
-  const data = await request<{ task: Task }>(`${API}/tasks/${taskId}`);
+  const data = await request<{ task: Task }>(`${API_BASE}/tasks/${taskId}`);
   return data.task;
 }
 
 export async function listTasks(projectId: string): Promise<Task[]> {
-  const data = await request<{ tasks: Task[] }>(`${API}/tasks?projectId=${projectId}`);
+  const data = await request<{ tasks: Task[] }>(`${API_BASE}/tasks?projectId=${projectId}`);
   return data.tasks;
 }
 
 // ── SSE ──────────────────────────────────────────────────────────────
 export function connectSSE(onEvent: (event: SseEvent) => void): () => void {
   const token = getToken();
-  const es = new EventSource(`${API}/sse${token ? `?token=${token}` : ''}`);
+  const es = new EventSource(`${API_BASE}/sse${token ? `?token=${encodeURIComponent(token)}` : ''}`);
 
+  let probeLock = false;
+  const onEsError = () => {
+    if (!token || probeLock) return;
+    probeLock = true;
+    void ensureSessionValid().finally(() => {
+      window.setTimeout(() => {
+        probeLock = false;
+      }, 2000);
+    });
+  };
+  es.addEventListener('error', onEsError);
   const handler = (e: MessageEvent) => {
     try {
       const data = JSON.parse(e.data) as Record<string, unknown>;
@@ -141,5 +249,8 @@ export function connectSSE(onEvent: (event: SseEvent) => void): () => void {
   es.addEventListener('task.completed', handler);
   es.addEventListener('task.error', handler);
 
-  return () => es.close();
+  return () => {
+    es.removeEventListener('error', onEsError);
+    es.close();
+  };
 }

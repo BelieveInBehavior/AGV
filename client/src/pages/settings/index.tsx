@@ -12,9 +12,11 @@ export default function SettingsPage() {
   const [llmBaseUrl, setLlmBaseUrl] = useState('');
   const [llmModel, setLlmModel] = useState('');
   const [llmApiKey, setLlmApiKey] = useState('');
-  const [imageProvider, setImageProvider] = useState<'fal' | 'none'>('none');
+  const [imageProvider, setImageProvider] = useState<'fal' | 'none' | 'gemini' | 'doubao'>('none');
   const [imageModel, setImageModel] = useState('');
   const [imageApiKey, setImageApiKey] = useState('');
+  const [imageSupportsMultiReference, setImageSupportsMultiReference] = useState(false);
+  const [imageMaxReferenceImages, setImageMaxReferenceImages] = useState(1);
   const [videoBaseUrl, setVideoBaseUrl] = useState('');
   const [videoModel, setVideoModel] = useState('');
   const [videoApiKey, setVideoApiKey] = useState('');
@@ -27,6 +29,8 @@ export default function SettingsPage() {
         setLlmModel(s.llmModel);
         setImageProvider(s.imageProvider);
         setImageModel(s.imageModel);
+        setImageSupportsMultiReference(s.imageSupportsMultiReference);
+        setImageMaxReferenceImages(s.imageMaxReferenceImages);
         setVideoBaseUrl(s.videoBaseUrl);
         setVideoModel(s.videoModel);
       })
@@ -43,6 +47,8 @@ export default function SettingsPage() {
         llmModel,
         imageProvider,
         imageModel,
+        imageSupportsMultiReference,
+        imageMaxReferenceImages,
         videoBaseUrl,
         videoModel,
       };
@@ -104,29 +110,50 @@ export default function SettingsPage() {
           </section>
 
           <section className="settings-section">
-            <h2>生图（FAL）</h2>
+            <h2>生图 Provider</h2>
+            <p className="hint">FAL 为默认实现；Gemini / Doubao 预留多参考接入（当前仍可能回退为 FAL 单张参考）。</p>
             <label className="field">
               <span>模式</span>
               <select
                 value={imageProvider}
-                onChange={(e) => setImageProvider(e.target.value as 'fal' | 'none')}
+                onChange={(e) => setImageProvider(e.target.value as 'fal' | 'none' | 'gemini' | 'doubao')}
                 style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #36406a', background: '#0f1428', color: '#eef2ff' }}
               >
-                <option value="fal">FAL 真实出图</option>
+                <option value="fal">FAL</option>
                 <option value="none">占位图（无 Key）</option>
+                <option value="gemini">Gemini（骨架）</option>
+                <option value="doubao">豆包（骨架）</option>
               </select>
             </label>
             <label className="field">
               <span>图像模型 ID</span>
               <input value={imageModel} onChange={(e) => setImageModel(e.target.value)} placeholder="fal-ai/flux/schnell" />
             </label>
+            <label className="field checkbox-field">
+              <span>支持多参考图</span>
+              <input
+                type="checkbox"
+                checked={imageSupportsMultiReference}
+                onChange={(e) => setImageSupportsMultiReference(e.target.checked)}
+              />
+            </label>
             <label className="field">
-              <span>FAL API Key {settings?.imageApiKeySet ? <em className="hint">（已保存）</em> : null}</span>
+              <span>最大参考图张数</span>
+              <input
+                type="number"
+                min={1}
+                max={16}
+                value={imageMaxReferenceImages}
+                onChange={(e) => setImageMaxReferenceImages(Number(e.target.value) || 1)}
+              />
+            </label>
+            <label className="field">
+              <span>API Key {settings?.imageApiKeySet ? <em className="hint">（已保存）</em> : null}</span>
               <input
                 type="password"
                 value={imageApiKey}
                 onChange={(e) => setImageApiKey(e.target.value)}
-                placeholder={settings?.imageApiKeySet ? '••••••••' : '与 FAL 控制台一致'}
+                placeholder={settings?.imageApiKeySet ? '••••••••' : '与所选 Provider 一致'}
                 autoComplete="off"
               />
             </label>
