@@ -1,5 +1,6 @@
 """
-首尾帧之间衔接描述（汉语）：按剧集一批 LLM，供后续视频阶段使用。
+首尾帧之间衔接描述（中文）：按剧集一批 LLM，供后续视频阶段使用。
+对齐 waoowaoo 镜头连续性思维。
 """
 
 from __future__ import annotations
@@ -10,15 +11,21 @@ from skills.llm_chat import chat_completion_text
 from utils.ai_settings import get_default_ai_settings
 from utils.json_utils import safe_parse_json
 
-_SYSTEM = """You are a film editor writing concise camera/action TRANSITION instructions between consecutive short video beats.
-Input: ordered clips with Chinese descriptions of first and last keyframes per beat.
-Output: JSON array, SAME LENGTH and SAME ORDER as input clips.
-Each element: {"clipId": "<must match input>", "transition_from_prev": "Chinese text or empty string"}
-The FIRST element MUST have transition_from_prev as "" (empty string).
-For clip index i>=1, describe how the shot flows from the previous clip's last frame to this clip's first frame.
+_SYSTEM = """你是专业剪辑师，为连续短剧情节段撰写「镜头衔接」说明（transition_from_prev）。
 
-Rules:
-- JSON only, no markdown
+【输入】
+按顺序给出各 clip 的首帧、末帧中文画面描述。
+
+【输出】
+JSON 数组，长度与顺序与输入 clips 完全一致。每项：
+{"clipId": "必须与输入一致", "transition_from_prev": "中文衔接说明或空字符串"}
+
+【规则】
+1. 第一项 transition_from_prev 必须为空字符串 ""
+2. 从第二项起：描述上一段末帧到本段首帧的运镜/动作/光线如何衔接（如切、溶、摇镜、角色走位承接）
+3. 保持空间与光线连贯；勿编造原文没有的新剧情
+4. 只返回 JSON，禁止 markdown
+5. JSON 字符串内勿出现未转义英文双引号，原文引号用「」
 """
 
 
@@ -39,10 +46,10 @@ def generate_transitions_batch(
     lines = []
     for i, row in enumerate(clips_payload):
         lines.append(
-            f'{i + 1}. clipId={row.get("clipId")} first_frame={row.get("first_desc", "")} '
-            f'last_frame={row.get("last_desc", "")}'
+            f'{i + 1}. clipId={row.get("clipId")} 首帧={row.get("first_desc", "")} '
+            f'末帧={row.get("last_desc", "")}'
         )
-    user = 'Clips in order:\n' + '\n'.join(lines)
+    user = '按顺序的情节段：\n' + '\n'.join(lines)
     text = chat_completion_text(
         system_prompt=_SYSTEM,
         user_prompt=user,

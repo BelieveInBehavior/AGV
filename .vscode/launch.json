@@ -1,0 +1,56 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "API (Node)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "${env:HOME}/.nvm/versions/node/v24.14.1/bin/node",
+      "cwd": "${workspaceFolder}/server",
+      "program": "${workspaceFolder}/server/src/app.js",
+      "console": "integratedTerminal",
+      "env": {
+        "CWEI_PORT": "3001",
+        "PATH": "${env:HOME}/.nvm/versions/node/v24.14.1/bin:${env:PATH}"
+      }
+    },
+    {
+      "name": "Worker (Celery, solo)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "celery",
+      "cwd": "${workspaceFolder}/worker",
+      "args": [
+        "-A",
+        "celery_app",
+        "worker",
+        "-Q",
+        "story,storyboard,image,video",
+        "--loglevel=INFO",
+        "--pool=solo"
+      ],
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/worker"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Client (Chrome)",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:3003",
+      "webRoot": "${workspaceFolder}/client/src",
+      "sourceMapPathOverrides": {
+        "/src/*": "${webRoot}/*"
+      }
+    }
+  ],
+  "compounds": [
+    {
+      "name": "全栈本地调试 (API + Worker)",
+      "configurations": ["API (Node)", "Worker (Celery, solo)"],
+      "stopAll": true
+    }
+  ]
+}

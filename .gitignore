@@ -2,6 +2,7 @@ node_modules
 dist
 .env
 client/.env
+client/.env.development.local
 server/.env
 npm-debug.log*
 __pycache__/

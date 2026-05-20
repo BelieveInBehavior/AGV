@@ -39,7 +39,7 @@ AGV/
 │   └── Dockerfile
 ├── worker/                     # Celery Worker（Python）
 │   ├── tasks/                  # story / beat_prompt / storyboard / image / video
-│   ├── skills/                 # `analyze_story`、`generate_storyboard`、`generate_beat_frames`（首尾帧 v2）、`multi_ref_image_gen`、`generate_transitions`、`build_image_prompt`、`llm_chat`
+│   ├── skills/                 # LLM Prompt 中文，风格对齐 waoowaoo：`analyze_story`（选角+场景+情节切片）、`generate_beat_frames`、`generate_storyboard`、`generate_transitions`、`multi_ref_image_gen`、`build_image_prompt`、`llm_chat`
 │   ├── scripts/                # `evaluate_beat_vs_panels.py`；`clear_storyboard_plans.py`（清空 storyboardPlan 便于重跑）
 │   ├── utils/                  # Mongo / Redis；`ai_settings.py`、`reference_assets.py`；`mock_ai.py`（Mock LLM）；`pipeline_telemetry.py`（流水线日志 + OTEL）
 │   ├── celery_app.py           # Celery 生产级配置
@@ -206,7 +206,7 @@ node scripts/stress-story-analysis.mjs
 ## 主流程（页面步骤）
 
 1. **输入文本** → `POST /api/generate/story` → 情节与 `clips`  
-2. **生成首尾帧 Prompt**（仅 LLM，不写图）→ `POST /api/generate/beat-prompts` → `clips.storyboardPlan` **v2 扁平**：首/末帧含中文 `description`、英文 `scene_prompt`（镜头/场景/动作，无外貌）、`characters[].outfit/emotion`；衔接字段 `transition_from_prev` 在首批首尾帧图完成后由 Worker 按集批量 LLM 写入（首 clip 为空），`episodes.status` → `beat_prompts_ready`  
+2. **生成首尾帧 Prompt**（仅 LLM，不写图）→ `POST /api/generate/beat-prompts` → `clips.storyboardPlan` **v2 扁平**：首/末帧含中文 `description`、中文 `scene_prompt`（镜头/场景/动作，无外貌；规则对齐 waoowaoo 分镜规划）、`characters[].outfit/emotion`；衔接字段 `transition_from_prev` 在首批首尾帧图完成后由 Worker 按集批量 LLM 写入（首 clip 为空），`episodes.status` → `beat_prompts_ready`  
 3. **首尾帧 Prompt 页**：在「视觉资产库」为角色/场景上传或 AI 生成参考图（可选本情节 `referenceOverrides`）；可编辑 `scene_prompt` 与角色衣着/情绪并保存。  
 4. **生成首尾帧图片** → `POST /api/generate/images`（带 `episodeId`）→ Worker **阶段化**：按 `outfit+emotion` 与基础形象生成/复用 **角色状态图**（Mongo `characterStates` + Redis `cs:{hash}`），再以场景参考 + 状态参考调用 **`multi_ref_image_gen`**（FAL 默认单参考，多参考能力由账号「AI 设置」中 `supportsMultiReference` / `maxReferenceImages` 声明；Gemini/豆包为预留骨架）→ `first_frame.imageUrl` / `last_frame.imageUrl`；完成后 `episodes.status` → `images_ready`  
 5. **生成视频** → `POST /api/generate/videos` → 读首尾帧图 URL + 文案（含 `transition_from_prev`）请求视频 API，写入 `clips.videoUrl`，`episodes.status` → `video_ready`  

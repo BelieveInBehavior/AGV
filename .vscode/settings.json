@@ -1,0 +1,8 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/worker/.venv/bin/python",
+  "debug.javascript.autoAttachFilter": "disabled",
+  "debug.javascript.defaultRuntimeExecutable": "${env:HOME}/.nvm/versions/node/v24.14.1/bin/node",
+  "terminal.integrated.env.osx": {
+    "PATH": "${env:HOME}/.nvm/versions/node/v24.14.1/bin:${env:PATH}"
+  }
+}

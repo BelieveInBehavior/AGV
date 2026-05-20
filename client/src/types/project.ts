@@ -74,7 +74,7 @@ export interface Panel {
   status: 'draft' | 'generating_image' | 'image_ready' | 'generating_video' | 'complete';
 }
 
-/** 首尾帧中单帧：scene_prompt + characters；imagePrompt 仅作读兼容/回退 */
+/** 首尾帧中单帧：中文 scene_prompt + characters；imagePrompt 仅作读兼容/回退 */
 export interface BeatCharacterPose {
   name: string;
   outfit: string;
