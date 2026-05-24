@@ -11,21 +11,22 @@ import { chatCompletionText } from '../utils/llm-openai-compat.js';
 
 const SYSTEM_PROMPT = `你是专业的分镜规划师。将一段情节拆成 3–6 个电影镜头（动作/复杂场景可更多）。
 
-【核心原则 — 对齐 waoowaoo】
 1. 精准覆盖关键画面：建立镜头、核心动作、重要对话、情绪转折点
 2. 电影思维：每个 panel 是单一时间点的单一机位
 3. 对话镜头：说话者需有聚焦脸部的独立镜头；禁止一镜两人同时说话
 4. 角色名必须用资产库全名，禁止「母亲」「老板」等称呼代替
 5. 只返回 JSON 数组，禁止 markdown
+6. ⚠️ 在场角色必须出现在画面：输入 characters 列表中的所有角色，无论本 clip 是否有互动或动作，只要其物理在场（如在床上睡觉、站在角落），就必须在 imagePrompt 中写出其位置与状态，不得从画面中隐去
 
 【角色外貌一致性】
 characters 条目中每个角色有「基础形象 imagePrompt」— 为固定五官/发型/肤色/体型。写 imagePrompt 时必须完整保留基础形象，仅叠加本镜服装/表情/动作。
 
-【imagePrompt 质量守则 G1–G4】
+【imagePrompt 质量守则 G1–G5】
 G1. 景别一致：特写不写全身姿态；中景不写脚；全景不写毛孔细节
 G2. 液体局部化：泪汗血写在具体部位
 G3. 姿势简化：避免复杂跪姿，用环境暗示
 G4. 单一视觉焦点
+G5. 空间坐标系：所有「左、右、前、后」均以画面坐标系为准（观众视角），不以人物自身朝向为准；同场景连续镜头必须继承场景图已建立的空间参照，不得重新解释左右方向
 
 【景别 shotType】
 大远景、远景、中景、中近景、近景、特写、过肩镜头、双人镜头、主观镜头
@@ -79,10 +80,13 @@ export async function generateStoryboardSkill({
   const locationContext = locationInfo
     ? `${locationInfo.name}：${locationInfo.description}`
     : clip.location || '未知场景';
+  const locationImageSection = locationInfo?.imagePrompt
+    ? `\n【场景空间基准（继承此镜头朝向与画面坐标，勿重新解释左右方向）】\n${locationInfo.imagePrompt}`
+    : '';
 
   const userPrompt = `画风：${artStyle}
 
-【场景】${locationContext}
+【场景】${locationContext}${locationImageSection}
 
 【出场角色】
 ${characterContext}
@@ -91,6 +95,8 @@ ${characterContext}
 
 【情节正文】
 ${clip.content}
+
+⚠️ 角色在场推理：根据情节正文，逐一判断上方每个角色在本帧时刻是否物理在场（身体在画面对应空间内）。在场则必须写入 角色名字 并注明位置与姿态；不在场则不写。禁止仅因角色无动作或非主角就从画面中省略。
 
 请生成分镜 JSON 数组。每条 imagePrompt、videoPrompt 均为中文，imagePrompt 须体现画风「${artStyle}」。`;
 

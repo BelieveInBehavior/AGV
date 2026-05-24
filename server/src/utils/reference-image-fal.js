@@ -2,7 +2,10 @@
  * 为项目资产库生成单张角色/场景参考图（FAL 文生图）
  */
 import * as fal from '@fal-ai/client';
-import { getResolutionFromRatio } from '../skills/build-image-prompt.js';
+import {
+  CHARACTER_REFERENCE_RATIO,
+  getResolutionFromRatio,
+} from '../skills/build-image-prompt.js';
 
 /**
  * @param {{
@@ -27,7 +30,9 @@ export async function generateLibraryReferenceImage({
   description,
   imagePrompt,
 }) {
-  const { width, height } = getResolutionFromRatio(videoRatio || '16:9');
+  const ratio =
+    kind === 'character' ? CHARACTER_REFERENCE_RATIO : videoRatio || '16:9';
+  const { width, height } = getResolutionFromRatio(ratio);
 
   fal.config({ credentials: falKey });
   const styleBit = `Art direction: ${artStyle || 'cinematic'}.`;
@@ -35,12 +40,16 @@ export async function generateLibraryReferenceImage({
   let prompt;
   if (imagePrompt && imagePrompt.trim()) {
     // 使用 LLM 从故事文本中解析出的专用 imagePrompt
-    prompt = `${styleBit} ${imagePrompt.trim()}`;
+    const base = imagePrompt.trim();
+    prompt =
+      kind === 'character'
+        ? `${styleBit} Vertical 9:16 portrait, full body character reference sheet, neutral pose, clear face, simple studio background. ${base}`
+        : `${styleBit} ${base}`;
   } else {
     // 兜底：使用 description 拼接通用模板
     prompt =
       kind === 'character'
-        ? `${styleBit} Character reference sheet, full body neutral pose, clear face, simple studio background, single character named ${name}. ${description || ''}`
+        ? `${styleBit} Vertical 9:16 portrait, full body character reference sheet, neutral pose, clear face, simple studio background, single character named ${name}. ${description || ''}`
         : `${styleBit} Wide environment concept art, establishing shot, no people, empty scene: ${name}. ${description || ''}`;
   }
 

@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
+import { CHARACTER_REFERENCE_RATIO } from '../../config/visual-assets';
 import type { BeatCharacterPose, Clip, Project, StoryboardPlan } from '../../types/project';
 import { patchClip } from '../../services/project';
 import {
   collectClipReferenceUrls,
   effectiveCharacterRefUrl,
   effectiveLocationRefUrl,
-  referenceSummaryForPreview,
 } from './visualRefHelpers';
 import { resolveBeatFrames } from './beatPlanHelpers';
 
@@ -57,7 +57,6 @@ export function BeatKeyframeEditor({
     setLastChars(cloneChars(l?.characters));
   }, [clip.clipId, plan]);
 
-  const summary = referenceSummaryForPreview(project, clip);
   const urls = collectClipReferenceUrls(project, clip);
 
   const savePrompts = async () => {
@@ -238,6 +237,11 @@ export function BeatKeyframeEditor({
             );
           })}
         </div>
+        {clip.characters.length > 0 ? (
+          <span className="beat-ref-ratio-note">
+            角色形象参考图须为 {CHARACTER_REFERENCE_RATIO}（在上方视觉资产库设置）
+          </span>
+        ) : null}
         <span className="beat-ref-url-count">参考图序列（Worker）：{urls.length} 张</span>
       </div>
 
@@ -323,18 +327,6 @@ export function BeatKeyframeEditor({
               </div>
             ))}
           </div>
-        </div>
-      </div>
-
-      <div className="beat-composite-preview">
-        <strong>合成预览（画风 + 资产摘要 + scene_prompt）</strong>
-        <div className="beat-composite-block">
-          <span className="beat-composite-label">首帧</span>
-          <pre className="prompt-en-pre beat-composite-pre">{[project.artStyle, summary, firstScene].filter(Boolean).join(' · ')}</pre>
-        </div>
-        <div className="beat-composite-block">
-          <span className="beat-composite-label">末帧</span>
-          <pre className="prompt-en-pre beat-composite-pre">{[project.artStyle, summary, lastScene].filter(Boolean).join(' · ')}</pre>
         </div>
       </div>
 

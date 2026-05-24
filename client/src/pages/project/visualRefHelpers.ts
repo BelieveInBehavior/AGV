@@ -29,17 +29,6 @@ export function collectClipReferenceUrls(project: Project, clip: Clip): string[]
   return [...new Set(urls)];
 }
 
-export function referenceSummaryForPreview(project: Project, clip: Clip): string {
-  const parts: string[] = [];
-  const loc = project.locations.find((l) => l.name.trim() === clip.location.trim());
-  if (loc?.description) parts.push(`Setting (${loc.name}): ${loc.description}`);
-  for (const cn of clip.characters || []) {
-    const c = project.characters.find((x) => x.name.trim() === cn.trim());
-    if (c?.description) parts.push(`Character (${c.name}): ${c.description}`);
-  }
-  return parts.join(' | ');
-}
-
 export function sceneRefReady(project: Project, clip: Clip): boolean {
   return Boolean(effectiveLocationRefUrl(project, clip));
 }

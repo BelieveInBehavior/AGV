@@ -16,6 +16,7 @@ import urllib.parse
 from datetime import datetime, timezone
 
 from celery_app import app
+from skills.build_image_prompt import CHARACTER_REFERENCE_RATIO, get_resolution
 from utils.ai_settings import get_ai_settings_for_project
 from utils.db import get_db
 from utils.redis_client import publish_progress, publish_complete, publish_error, set_task_state
@@ -47,17 +48,6 @@ def _txt2img_fal(prompt: str, width: int, height: int, fal_key: str, model_id: s
 
     images = result.get('images', [])
     return images[0]['url'] if images else None
-
-
-def _get_resolution(video_ratio: str) -> tuple[int, int]:
-    ratios = {
-        '16:9': (1280, 720),
-        '9:16': (720, 1280),
-        '1:1': (1024, 1024),
-        '4:3': (1024, 768),
-        '3:4': (768, 1024),
-    }
-    return ratios.get(video_ratio, (1280, 720))
 
 
 @app.task(
@@ -99,8 +89,13 @@ def generate_reference_images(self, task_id: str, project_id: str, **kwargs):
 
         art_style = project.get('artStyle', 'cinematic')
         video_ratio = project.get('videoRatio', '16:9')
-        width, height = _get_resolution(video_ratio)
+        char_w, char_h = get_resolution(CHARACTER_REFERENCE_RATIO)
+        loc_w, loc_h = get_resolution(video_ratio)
         style_bit = f'Art direction: {art_style}.'
+        char_prefix = (
+            'Vertical 9:16 portrait, full body character reference sheet, '
+            'neutral pose, clear face, simple studio background.'
+        )
 
         characters = project.get('characters', [])
         locations = project.get('locations', [])
@@ -127,9 +122,9 @@ def generate_reference_images(self, task_id: str, project_id: str, **kwargs):
         # ── 角色参考图 ────────────────────────────────────────────────
         updated_chars = list(characters)
         for c in char_jobs:
-            prompt = f'{style_bit} Character reference sheet, full body neutral pose, clear face, simple studio background. {c["imagePrompt"]}'
+            prompt = f'{style_bit} {char_prefix} {c["imagePrompt"]}'
             try:
-                url = _txt2img_fal(prompt, width, height, fal_key, model_id)
+                url = _txt2img_fal(prompt, char_w, char_h, fal_key, model_id)
                 if url:
                     for uc in updated_chars:
                         if uc.get('name') == c['name']:
@@ -146,7 +141,7 @@ def generate_reference_images(self, task_id: str, project_id: str, **kwargs):
         for l in loc_jobs:
             prompt = f'{style_bit} Wide environment concept art, establishing shot, no people, empty scene. {l["imagePrompt"]}'
             try:
-                url = _txt2img_fal(prompt, width, height, fal_key, model_id)
+                url = _txt2img_fal(prompt, loc_w, loc_h, fal_key, model_id)
                 if url:
                     for ul in updated_locs:
                         if ul.get('name') == l['name']:

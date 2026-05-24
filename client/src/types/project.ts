@@ -8,7 +8,7 @@ export interface Character {
   role: 'protagonist' | 'antagonist' | 'supporting';
   /** LLM 生成的角色视觉 prompt（外貌、服装、体态等） */
   imagePrompt?: string;
-  /** 项目级角色参考图 URL（https 或 data URL） */
+  /** 项目级角色参考图 URL（https 或 data URL）；必须为竖屏 9:16 */
   referenceImageUrl?: string | null;
 }
 
@@ -35,6 +35,49 @@ export interface Project {
   updatedAt: string;
 }
 
+export interface EvaluationCriterion {
+  score: number;
+  comment: string;
+}
+
+export interface EvaluationIssue {
+  severity: 'critical' | 'major' | 'minor' | 'info';
+  targetType: string;
+  targetId?: string;
+  frame?: 'first_frame' | 'last_frame' | null;
+  title: string;
+  detail: string;
+  suggestion: string;
+}
+
+export interface EvaluationScopeResult {
+  scope: 'story_analysis' | 'beat_frames';
+  score: number;
+  grade: 'A' | 'B' | 'C' | 'D';
+  verdict: 'pass' | 'warning' | 'fail';
+  summary: string;
+  criteria: Record<string, EvaluationCriterion>;
+  issues: EvaluationIssue[];
+  strengths: string[];
+}
+
+export interface EpisodeEvaluation {
+  status: 'completed' | 'failed' | string;
+  taskId: string;
+  scopes: ('story_analysis' | 'beat_frames')[];
+  createdAt: string;
+  overall: {
+    score: number;
+    grade: 'A' | 'B' | 'C' | 'D';
+    verdict: 'pass' | 'warning' | 'fail';
+    summary: string;
+    criticalIssueCount: number;
+    majorIssueCount: number;
+  };
+  storyAnalysis?: EvaluationScopeResult;
+  beatFrames?: EvaluationScopeResult;
+}
+
 export interface Episode {
   episodeId: string;
   projectId: string;
@@ -51,6 +94,7 @@ export interface Episode {
     | 'video_ready'
     | 'complete';
   clipIds: string[];
+  evaluation?: EpisodeEvaluation | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -127,6 +171,8 @@ export interface Clip {
   location: string;
   mood: string;
   sceneComplexity?: 'simple' | 'complex';
+  /** LLM 预估的视频时长（秒，5-15） */
+  duration?: number;
   storyboardPlan?: StoryboardPlan | null;
   /** 首尾帧链路生成的视频 URL（Mongo clip 顶层字段） */
   videoUrl?: string | null;
@@ -140,7 +186,7 @@ export interface Clip {
 
 export interface Task {
   taskId: string;
-  type: 'STORY_ANALYSIS' | 'BEAT_PROMPT_GEN' | 'STORYBOARD_GEN' | 'IMAGE_GENERATION' | 'VIDEO_GENERATION';
+  type: 'STORY_ANALYSIS' | 'BEAT_PROMPT_GEN' | 'STORYBOARD_GEN' | 'IMAGE_GENERATION' | 'VIDEO_GENERATION' | 'EPISODE_EVALUATION';
   status: 'pending' | 'queued' | 'claimed' | 'running' | 'retrying' | 'completed' | 'failed';
   progress: number;
   message: string;

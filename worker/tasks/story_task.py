@@ -109,6 +109,13 @@ def analyze_story(self, task_id: str, episode_id: str, project_id: str, **kwargs
             complexity = clip.get('sceneComplexity', 'simple')
             if complexity not in ('simple', 'complex'):
                 complexity = 'simple'
+            # duration: 整数秒，钳位到 5-15
+            raw_duration = clip.get('duration', 10)
+            try:
+                duration = max(5, min(15, int(raw_duration)))
+            except (TypeError, ValueError):
+                duration = 10
+
             clip_docs.append({
                 'clipId': clip_id,
                 'episodeId': episode_id,
@@ -120,6 +127,7 @@ def analyze_story(self, task_id: str, episode_id: str, project_id: str, **kwargs
                 'location': clip.get('location', ''),
                 'mood': clip.get('mood', ''),
                 'sceneComplexity': complexity,
+                'duration': duration,
                 'storyboardPlan': None,
                 'panelIds': [],
                 'createdAt': now,

@@ -20,7 +20,7 @@ import { emitStoryAnalysisEnqueuedSpan, logPipelineEvent } from '../utils/pipeli
  * 创建并发布任务
  *
  * @param {{
- *   type: 'STORY_ANALYSIS'|'BEAT_PROMPT_GEN'|'STORYBOARD_GEN'|'IMAGE_GENERATION'|'VIDEO_GENERATION',
+ *   type: 'STORY_ANALYSIS'|'BEAT_PROMPT_GEN'|'STORYBOARD_GEN'|'IMAGE_GENERATION'|'VIDEO_GENERATION'|'EPISODE_EVALUATION',
  *   projectId: string,
  *   episodeId?: string,
  *   payload?: object
@@ -125,6 +125,15 @@ export async function enqueueTask({ type, projectId, episodeId, payload = {} }) 
           projectId,
           episodeId: episodeId || null,
           clipIds: payload.clipIds || [],
+        });
+        break;
+
+      case 'EPISODE_EVALUATION':
+        await CeleryTasks.evaluateEpisodeOutputs({
+          taskId,
+          episodeId,
+          projectId,
+          scopes: payload.scopes || [],
         });
         break;
 

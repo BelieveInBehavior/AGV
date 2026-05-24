@@ -37,6 +37,9 @@ RESOLUTION_MAP = {
     '21:9':  (1920, 820),
 }
 
+# 角色形象参考图固定竖屏（与项目 videoRatio 无关）
+CHARACTER_REFERENCE_RATIO = '9:16'
+
 
 def build_image_prompt(
     panel: dict,

@@ -1,6 +1,6 @@
 import { API_BASE } from '../config/api';
 import { getToken, assertApiAuthorized, ensureSessionValid, forceRelogin } from './auth';
-import type { Project, Episode, Clip, Task, SseEvent, StoryboardMode } from '../types/project';
+import type { Project, Episode, Clip, Task, SseEvent, StoryboardMode, EpisodeEvaluation } from '../types/project';
 
 function authHeaders() {
   return { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` };
@@ -190,6 +190,18 @@ export async function generateVideos(
   const data = await request<{ taskId: string }>(`${API_BASE}/generate/videos`, {
     method: 'POST',
     body: JSON.stringify({ projectId, episodeId, clipIds }),
+  });
+  return data.taskId;
+}
+
+export async function evaluateEpisode(
+  projectId: string,
+  episodeId: string,
+  scopes?: EpisodeEvaluation['scopes']
+): Promise<string> {
+  const data = await request<{ taskId: string }>(`${API_BASE}/generate/evaluation`, {
+    method: 'POST',
+    body: JSON.stringify({ projectId, episodeId, scopes }),
   });
   return data.taskId;
 }

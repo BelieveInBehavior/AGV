@@ -152,4 +152,18 @@ export const CeleryTasks = {
       taskId,
     });
   },
+
+  async evaluateEpisodeOutputs({ taskId, projectId, episodeId, scopes = [] }) {
+    return publishCeleryTask({
+      taskName: 'tasks.evaluation_task.evaluate_episode_outputs',
+      kwargs: {
+        task_id: taskId,
+        project_id: projectId,
+        episode_id: episodeId,
+        scopes,
+      },
+      queue: 'storyboard',
+      taskId,
+    });
+  },
 };

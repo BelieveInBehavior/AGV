@@ -97,6 +97,9 @@ export function buildImagePromptSkill({
   return { positive, negative };
 }
 
+/** 角色形象参考图固定竖屏比例（与项目 videoRatio 无关） */
+export const CHARACTER_REFERENCE_RATIO = '9:16';
+
 /**
  * 获取宽高比对应的分辨率
  * @param {string} ratio - '16:9', '9:16', '1:1', '4:3', '3:4'

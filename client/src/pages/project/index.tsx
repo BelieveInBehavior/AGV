@@ -10,13 +10,20 @@ import {
   generateStoryboard,
   generateImages,
   generateVideos,
+  evaluateEpisode,
   getTask,
   listTasks,
   connectSSE,
 } from '../../services/project';
+import { CHARACTER_REFERENCE_RATIO } from '../../config/visual-assets';
 import type { Project, Episode, Clip, Task, SseEvent, StoryboardMode } from '../../types/project';
 import { VisualAssetLibrary } from './VisualAssetLibrary';
 import { BeatKeyframeEditor } from './BeatKeyframeEditor';
+import {
+  EpisodeEvaluationModal,
+  EvaluationScoreBadge,
+  hasEvaluationForScope,
+} from './EpisodeEvaluationPanel';
 import {
   hasBeatStoryboardContent,
   isLegacyBeatPlan,
@@ -26,6 +33,11 @@ import {
 import { sceneRefReady } from './visualRefHelpers';
 
 type Stage = 'input' | 'clips' | 'prompts' | 'images' | 'video';
+type EvaluationScope = 'story_analysis' | 'beat_frames' | 'all';
+
+function scopesToModalScope(scopes: ('story_analysis' | 'beat_frames')[]): EvaluationScope {
+  return scopes.length >= 2 ? 'all' : scopes[0];
+}
 
 const STAGE_ORDER: Stage[] = ['input', 'clips', 'prompts', 'images', 'video'];
 
@@ -159,9 +171,15 @@ export default function ProjectPage() {
   const [storyboardMode, setStoryboardMode] = useState<StoryboardMode>('auto');
   const [showClassicStoryboard, setShowClassicStoryboard] = useState(false);
   const [error, setError] = useState('');
+  const [evaluationModal, setEvaluationModal] = useState<{ open: boolean; scope: EvaluationScope }>({
+    open: false,
+    scope: 'all',
+  });
 
   const sseCleanup = useRef<(() => void) | null>(null);
   const activeEpisodeRef = useRef<Episode | null>(null);
+  const pendingEvaluationScopeRef = useRef<EvaluationScope | null>(null);
+  const handledEvaluationTasksRef = useRef(new Set<string>());
   activeEpisodeRef.current = activeEpisode;
 
   const refreshProjectData = useCallback(
@@ -193,6 +211,30 @@ export default function ProjectPage() {
     );
   }, []);
 
+  const openEvaluationModal = useCallback((scope: EvaluationScope) => {
+    setEvaluationModal({ open: true, scope });
+  }, []);
+
+  const closeEvaluationModal = useCallback(() => {
+    setEvaluationModal((m) => ({ ...m, open: false }));
+  }, []);
+
+  const onEvaluationTaskDone = useCallback(() => {
+    const scope = pendingEvaluationScopeRef.current ?? 'all';
+    pendingEvaluationScopeRef.current = null;
+    setEvaluationModal({ open: true, scope });
+  }, []);
+
+  const markEvaluationTaskHandled = useCallback(
+    (taskId: string, taskType: Task['type'] | undefined, status: Task['status']) => {
+      if (taskType !== 'EPISODE_EVALUATION' || status !== 'completed') return;
+      if (handledEvaluationTasksRef.current.has(taskId)) return;
+      handledEvaluationTasksRef.current.add(taskId);
+      onEvaluationTaskDone();
+    },
+    [onEvaluationTaskDone],
+  );
+
   // SSE 事件处理
   const handleSseEvent = useCallback(
     (event: SseEvent) => {
@@ -207,10 +249,14 @@ export default function ProjectPage() {
           },
         }));
       } else if (event.type === 'task.completed') {
-        setTasks((prev) => ({
-          ...prev,
-          [event.taskId]: { ...(prev[event.taskId] as Task), status: 'completed', progress: 100 },
-        }));
+        setTasks((prev) => {
+          const existing = prev[event.taskId] as Task | undefined;
+          markEvaluationTaskHandled(event.taskId, existing?.type, 'completed');
+          return {
+            ...prev,
+            [event.taskId]: { ...(existing as Task), status: 'completed', progress: 100 },
+          };
+        });
         const epId = activeEpisodeRef.current?.episodeId;
         if (projectId && epId) void refreshProjectData(epId);
       } else if (event.type === 'task.error') {
@@ -224,7 +270,7 @@ export default function ProjectPage() {
         }));
       }
     },
-    [projectId, refreshProjectData]
+    [projectId, refreshProjectData, markEvaluationTaskHandled]
   );
 
   // 初始化 SSE 连接
@@ -256,6 +302,7 @@ export default function ProjectPage() {
             [taskId]: { ...(prev[taskId] as Task), ...t },
           }));
           if (t.status === 'completed') {
+            markEvaluationTaskHandled(taskId, t.type, t.status);
             const epId = t.episodeId ?? activeEpisodeRef.current?.episodeId;
             if (epId) void refreshProjectData(epId);
           }
@@ -271,7 +318,7 @@ export default function ProjectPage() {
       cancelled = true;
       clearInterval(iv);
     };
-  }, [nonTerminalTaskKey, projectId, refreshProjectData]);
+  }, [nonTerminalTaskKey, projectId, refreshProjectData, markEvaluationTaskHandled]);
 
   // 加载项目数据
   useEffect(() => {
@@ -421,6 +468,21 @@ export default function ProjectPage() {
     }
   };
 
+  const handleEvaluate = async (scopes: ('story_analysis' | 'beat_frames')[]) => {
+    if (!projectId || !activeEpisode) return;
+    setError('');
+    const modalScope = scopesToModalScope(scopes);
+    pendingEvaluationScopeRef.current = modalScope;
+    setEvaluationModal((m) => ({ ...m, scope: modalScope }));
+    try {
+      const taskId = await evaluateEpisode(projectId, activeEpisode.episodeId, scopes);
+      addTask(taskId, 'EPISODE_EVALUATION', activeEpisode.episodeId);
+    } catch (e: unknown) {
+      pendingEvaluationScopeRef.current = null;
+      setError(e instanceof Error ? e.message : '评估失败');
+    }
+  };
+
   const goToStage = useCallback(
     (target: Stage) => {
       if (!stageUnlocked(target, activeEpisode, clips)) return;
@@ -441,6 +503,20 @@ export default function ProjectPage() {
   const hasLegacyBeatPlan = clips.some((c) => isLegacyBeatPlan(c.storyboardPlan ?? undefined));
   const galleryItems = buildGalleryItems(clips);
   const hasStoryboardVisualPlan = allPanels.length > 0 || hasBeatStoryboard;
+  const clipsEvalScope: EvaluationScope = 'story_analysis';
+  const promptsEvalScope: EvaluationScope = hasEvaluationForScope(activeEpisode?.evaluation, 'all')
+    ? 'all'
+    : 'beat_frames';
+
+  const reevaluateForModalScope = () => {
+    const scopes =
+      evaluationModal.scope === 'beat_frames'
+        ? (['beat_frames'] as const)
+        : evaluationModal.scope === 'story_analysis'
+          ? (['story_analysis'] as const)
+          : (['story_analysis', 'beat_frames'] as const);
+    void handleEvaluate([...scopes]);
+  };
 
   return (
     <div className="project-page">
@@ -503,6 +579,7 @@ export default function ProjectPage() {
                   STORYBOARD_GEN: '经典分镜',
                   IMAGE_GENERATION: '图片生成',
                   VIDEO_GENERATION: '视频生成',
+                  EPISODE_EVALUATION: '质量评估',
                 }[t.type]
               }
             </span>
@@ -557,6 +634,20 @@ export default function ProjectPage() {
                     {runningTasks.length > 0 ? '生成中...' : '📝 生成首尾帧 Prompt'}
                   </button>
                 )}
+                {clips.length > 0 && (
+                  <button
+                    className="btn-ghost"
+                    onClick={() => handleEvaluate(['story_analysis'])}
+                    disabled={runningTasks.length > 0}
+                  >
+                    🔍 评估情节分析
+                  </button>
+                )}
+                <EvaluationScoreBadge
+                  evaluation={activeEpisode?.evaluation}
+                  scope={clipsEvalScope}
+                  onOpen={() => openEvaluationModal(clipsEvalScope)}
+                />
                 {hasStoryboardVisualPlan && (
                   <button type="button" className="btn-ghost" onClick={() => goToStage('prompts')}>
                     查看首尾帧 Prompt →
@@ -633,12 +724,20 @@ export default function ProjectPage() {
 
                 {/* 情节片段列表 */}
                 <div className="clips-list">
+                  {clips.length > 0 && clips.some(c => c.duration) && (
+                    <div className="clips-total-duration">
+                      总时长预估：{clips.reduce((sum, c) => sum + (c.duration || 0), 0)}s
+                    </div>
+                  )}
                   {clips.map((clip) => (
                     <div key={clip.clipId} className="clip-card">
                       <div className="clip-header">
                         <span className="clip-num">情节 {clip.clipIndex + 1}</span>
                         <span className="clip-location">📍 {clip.location}</span>
                         <span className={`clip-mood mood-${clip.mood}`}>{clip.mood}</span>
+                        {clip.duration && (
+                          <span className="clip-duration">⏱ {clip.duration}s</span>
+                        )}
                         {clip.sceneComplexity === 'complex' && (
                           <span className="clip-complexity" title="在「高级：经典多分镜」中可走多分镜">
                             复杂镜头
@@ -673,8 +772,34 @@ export default function ProjectPage() {
                     {runningTasks.length > 0 ? '生成中...' : '🖼️ 生成首尾帧图片'}
                   </button>
                 )}
+                {hasBeatStoryboard && (
+                  <button
+                    className="btn-ghost"
+                    onClick={() => handleEvaluate(['beat_frames'])}
+                    disabled={runningTasks.length > 0}
+                  >
+                    🔍 评估首尾帧
+                  </button>
+                )}
+                {clips.length > 0 && hasBeatStoryboard && (
+                  <button
+                    className="btn-ghost"
+                    onClick={() => handleEvaluate(['story_analysis', 'beat_frames'])}
+                    disabled={runningTasks.length > 0}
+                  >
+                    🔍 整体评估
+                  </button>
+                )}
+                <EvaluationScoreBadge
+                  evaluation={activeEpisode?.evaluation}
+                  scope={promptsEvalScope}
+                  onOpen={() => openEvaluationModal(promptsEvalScope)}
+                />
               </div>
             </div>
+            <p className="stage-hint">
+              视觉资产库中，<strong>角色形象参考图必须为竖屏 {CHARACTER_REFERENCE_RATIO}</strong>（AI 生成与本地上传均遵守）；场景参考图比例跟随项目视频设置。
+            </p>
 
             {runningTasks.length > 0 && !hasStoryboardVisualPlan ? (
               <div className="analyzing-state">
@@ -715,6 +840,9 @@ export default function ProjectPage() {
                         <h3 className="clip-section-title">
                           情节 {clip.clipIndex + 1}: {clip.summary}
                           <span className="beat-badge">首尾帧</span>
+                          {clip.duration && (
+                            <span className="clip-duration">⏱ {clip.duration}s</span>
+                          )}
                         </h3>
                         <p className="beat-dramatic">
                           <strong>节拍：</strong>
@@ -870,7 +998,10 @@ export default function ProjectPage() {
               {clips.map((clip) =>
                 clip.videoUrl ? (
                   <div key={clip.clipId} className="video-clip-card">
-                    <h4 className="video-clip-title">情节 {clip.clipIndex + 1} · {clip.summary.slice(0, 40)}</h4>
+                    <h4 className="video-clip-title">
+                      情节 {clip.clipIndex + 1} · {clip.summary.slice(0, 40)}
+                      {clip.duration && <span className="clip-duration">⏱ {clip.duration}s</span>}
+                    </h4>
                     <video src={clip.videoUrl} controls className="clip-video" playsInline />
                   </div>
                 ) : null,
@@ -884,6 +1015,16 @@ export default function ProjectPage() {
           </div>
         )}
       </div>
+
+      <EpisodeEvaluationModal
+        open={evaluationModal.open}
+        onClose={closeEvaluationModal}
+        evaluation={activeEpisode?.evaluation}
+        episode={activeEpisode}
+        scope={evaluationModal.scope}
+        onReevaluate={reevaluateForModalScope}
+        disabled={runningTasks.length > 0}
+      />
     </div>
   );
 }

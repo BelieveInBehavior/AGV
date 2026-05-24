@@ -1,4 +1,9 @@
 import { useRef, useState } from 'react';
+import {
+  CHARACTER_REFERENCE_RATIO,
+  isCharacterReferenceAspectRatio,
+  readImageFileDimensions,
+} from '../../config/visual-assets';
 import type { Clip, Project } from '../../types/project';
 import { patchProjectReferences, generateProjectReferenceImage } from '../../services/project';
 
@@ -117,6 +122,14 @@ export function VisualAssetLibrary({
     if (!file) return;
     setBusy(`up:${kind}:${name}`);
     try {
+      if (kind === 'character') {
+        const { width, height } = await readImageFileDimensions(file);
+        if (!isCharacterReferenceAspectRatio(width, height)) {
+          throw new Error(
+            `角色形象图必须为 ${CHARACTER_REFERENCE_RATIO}（当前约 ${width}×${height}）`,
+          );
+        }
+      }
       const dataUrl = await new Promise<string>((resolve, reject) => {
         const r = new FileReader();
         r.onload = () => resolve(String(r.result || ''));
@@ -171,13 +184,22 @@ export function VisualAssetLibrary({
       <div className="visual-asset-library-head">
         <h3 className="visual-asset-title">视觉资产库</h3>
         <p className="visual-asset-hint">
-          为角色与场景准备参考图后再生成首尾帧，可降低人物与场景漂移。支持本地上传或 AI 按文案生成。
-          故事分析后会自动生成 Image Prompt，AI 生图时优先使用它。
+          为角色与场景准备参考图后再生成首尾帧，可降低人物与场景漂移。支持本地上传或 AI 按文案生成；故事分析后会自动生成
+          Image Prompt。
         </p>
       </div>
       <div className="visual-asset-columns">
         <div>
-          <h4 className="visual-asset-col-title">角色</h4>
+          <div className="visual-asset-col-head">
+            <h4 className="visual-asset-col-title">角色</h4>
+            <span className="visual-asset-ratio-badge visual-asset-ratio-badge--required">
+              必须 {CHARACTER_REFERENCE_RATIO}
+            </span>
+          </div>
+          <p className="visual-asset-ratio-spec">
+            角色形象参考图固定为竖屏 <strong>{CHARACTER_REFERENCE_RATIO}</strong>（推荐 720×1280）。
+            AI 生成将自动按此比例输出；本地上传会校验宽高比，不符将无法保存。
+          </p>
           <div className="visual-asset-grid">
             {project.characters.map((c) => {
               const refUrl = (c.referenceImageUrl || '').trim() || null;
@@ -185,13 +207,14 @@ export function VisualAssetLibrary({
               const id = `char:${c.name}`;
               const isBusy = busy === `ai:character:${c.name}`;
               return (
-                <div key={c.name} className={`visual-asset-card ${ready ? 'is-ready' : ''}`}>
-                  <div className="visual-asset-thumb-wrap">
+                <div key={c.name} className={`visual-asset-card visual-asset-card--character ${ready ? 'is-ready' : ''}`}>
+                  <div className="visual-asset-thumb-wrap visual-asset-thumb-wrap--character">
                     {refUrl ? (
-                      <img src={refUrl} alt="" className="visual-asset-thumb" />
+                      <img src={refUrl} alt="" className="visual-asset-thumb visual-asset-thumb--character" />
                     ) : (
-                      <div className="visual-asset-thumb-empty">无图</div>
+                      <div className="visual-asset-thumb-empty visual-asset-thumb-empty--character">无图</div>
                     )}
+                    <span className="visual-asset-ratio-tag">{CHARACTER_REFERENCE_RATIO}</span>
                     <span className={`visual-asset-dot ${ready ? 'on' : ''}`} title={ready ? '已设参考' : '未设参考'} />
                   </div>
                   <div className="visual-asset-meta">
@@ -226,8 +249,9 @@ export function VisualAssetLibrary({
                       className="btn-ghost btn-small"
                       disabled={disabled || Boolean(busy)}
                       onClick={() => fileRef.current[id]?.click()}
+                      title={`上传 ${CHARACTER_REFERENCE_RATIO} 竖屏图`}
                     >
-                      上传
+                      上传 {CHARACTER_REFERENCE_RATIO}
                     </button>
                     {refUrl ? (
                       <button

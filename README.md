@@ -11,8 +11,9 @@ AGV/
 │   ├── src/
 │   │   ├── pages/login/        # 手机号验证码登录页
 │   │   ├── pages/settings/     # AI 模型设置（文本 / 生图 / 生视频预留）
-│   │   ├── pages/project/      # 项目工作台：`index.tsx`、`VisualAssetLibrary.tsx`、`BeatKeyframeEditor.tsx`、`visualRefHelpers.ts`
+│   │   ├── pages/project/      # 项目工作台：`index.tsx`、`EpisodeEvaluationPanel.tsx`（质量评估弹窗）、`VisualAssetLibrary.tsx`、`BeatKeyframeEditor.tsx`、`visualRefHelpers.ts`
 │   │   ├── config/api.ts       # `VITE_API_ORIGIN`：开发时直连后端端口（如 :3011）；未设则用 `/api` 代理
+│   │   ├── config/visual-assets.ts  # 角色参考图强制 `9:16` 常量与上传宽高比校验
 │   │   ├── services/auth.ts    # 登录 API、token；401 时跳转 `/login`
 │   │   ├── types/auth.ts       # 登录相关类型定义
 │   │   ├── App.tsx             # 路由入口（未登录跳转 /login）
@@ -205,9 +206,9 @@ node scripts/stress-story-analysis.mjs
 
 ## 主流程（页面步骤）
 
-1. **输入文本** → `POST /api/generate/story` → 情节与 `clips`  
+1. **输入文本** → `POST /api/generate/story` → 情节与 `clips`（`analyze_story` 完成后会对相邻 clip 做**角色在场回填**：下一段已出场且本段无「进入」描写的角色会补入上一段 `characters`，避免环境镜头漏掉同床配角）  
 2. **生成首尾帧 Prompt**（仅 LLM，不写图）→ `POST /api/generate/beat-prompts` → `clips.storyboardPlan` **v2 扁平**：首/末帧含中文 `description`、中文 `scene_prompt`（镜头/场景/动作，无外貌；规则对齐 waoowaoo 分镜规划）、`characters[].outfit/emotion`；衔接字段 `transition_from_prev` 在首批首尾帧图完成后由 Worker 按集批量 LLM 写入（首 clip 为空），`episodes.status` → `beat_prompts_ready`  
-3. **首尾帧 Prompt 页**：在「视觉资产库」为角色/场景上传或 AI 生成参考图（可选本情节 `referenceOverrides`）；可编辑 `scene_prompt` 与角色衣着/情绪并保存。  
+3. **首尾帧 Prompt 页**：在「视觉资产库」为角色/场景上传或 AI 生成参考图（**角色形象图必须为 9:16**，前端声明并校验上传宽高比；可选本情节 `referenceOverrides`）；可编辑 `scene_prompt` 与角色衣着/情绪并保存。  
 4. **生成首尾帧图片** → `POST /api/generate/images`（带 `episodeId`）→ Worker **阶段化**：按 `outfit+emotion` 与基础形象生成/复用 **角色状态图**（Mongo `characterStates` + Redis `cs:{hash}`），再以场景参考 + 状态参考调用 **`multi_ref_image_gen`**（FAL 默认单参考，多参考能力由账号「AI 设置」中 `supportsMultiReference` / `maxReferenceImages` 声明；Gemini/豆包为预留骨架）→ `first_frame.imageUrl` / `last_frame.imageUrl`；完成后 `episodes.status` → `images_ready`  
 5. **生成视频** → `POST /api/generate/videos` → 读首尾帧图 URL + 文案（含 `transition_from_prev`）请求视频 API，写入 `clips.videoUrl`，`episodes.status` → `video_ready`  
 
@@ -229,7 +230,7 @@ node scripts/stress-story-analysis.mjs
 - `PATCH /api/projects/:projectId/references`  
   请求体可选：`characters` / `locations` 为 `{ name, referenceImageUrl }[]`（`https` 或 `data:image/...`）；可选 `episodeId` 以将当前集 `storyboardPlan.referenceStale` 标为待同步。
 - `POST /api/projects/:projectId/references/generate`  
-  请求体：`{ "kind": "character"|"location", "name": "...", "episodeId"?: "..." }`，使用账号 FAL 设置生成单张参考图并写回 `projects`。
+  请求体：`{ "kind": "character"|"location", "name": "...", "episodeId"?: "..." }`，使用账号 FAL 设置生成单张参考图并写回 `projects`。**角色**固定 **9:16**（720×1280）；**场景**跟随项目 `videoRatio`。
 - `PATCH /api/projects/:projectId/episodes/:episodeId/clips/:clipId`  
   请求体可选：`referenceOverrides`（`characterImages`、`locationImage`）；`beatPrompts` 设置 `first_frame` / `last_frame` 的 `scene_prompt`、`description`、`characters`。
 - `POST /api/generate/story`

@@ -44,6 +44,7 @@ app.conf.update(
         'tasks.image_task.*':             {'queue': 'image'},
         'tasks.reference_image_task.*':   {'queue': 'image'},
         'tasks.video_task.*':             {'queue': 'video'},
+        'tasks.evaluation_task.*':        {'queue': 'storyboard'},
     },
 
     # 可靠性配置
