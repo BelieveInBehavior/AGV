@@ -12,7 +12,7 @@ AGV/
 │   │   ├── pages/login/        # 手机号验证码登录页
 │   │   ├── pages/settings/     # AI 模型设置（文本 / 生图 / 生视频预留）
 │   │   ├── pages/project/      # 项目工作台：`index.tsx`、`EpisodeEvaluationPanel.tsx`（质量评估弹窗）、`VisualAssetLibrary.tsx`、`BeatKeyframeEditor.tsx`、`visualRefHelpers.ts`
-│   │   ├── config/api.ts       # `VITE_API_ORIGIN`：开发时直连后端端口（如 :3011）；未设则用 `/api` 代理
+│   │   ├── config/api.ts       # 开发默认 `/api`（Vite 代理到 CWEI_PORT）；`vite-plugin-agv-api-proxy.ts` 启动校验
 │   │   ├── config/visual-assets.ts  # 角色参考图强制 `9:16` 常量与上传宽高比校验
 │   │   ├── services/auth.ts    # 登录 API、token；401 时跳转 `/login`
 │   │   ├── types/auth.ts       # 登录相关类型定义
@@ -40,7 +40,7 @@ AGV/
 │   └── Dockerfile
 ├── worker/                     # Celery Worker（Python）
 │   ├── tasks/                  # story / beat_prompt / storyboard / image / video
-│   ├── skills/                 # LLM Prompt 中文，风格对齐 waoowaoo：`analyze_story`（选角+场景+情节切片）、`generate_beat_frames`、`generate_storyboard`、`generate_transitions`、`multi_ref_image_gen`、`build_image_prompt`、`llm_chat`
+│   ├── skills/                 # LLM Prompt 中文，风格对齐统一规范：`analyze_story`（选角+场景+情节切片）、`generate_beat_frames`、`generate_storyboard`、`generate_transitions`、`multi_ref_image_gen`、`build_image_prompt`、`llm_chat`
 │   ├── scripts/                # `evaluate_beat_vs_panels.py`；`clear_storyboard_plans.py`（清空 storyboardPlan 便于重跑）
 │   ├── utils/                  # Mongo / Redis；`ai_settings.py`、`reference_assets.py`；`mock_ai.py`（Mock LLM）；`pipeline_telemetry.py`（流水线日志 + OTEL）
 │   ├── celery_app.py           # Celery 生产级配置
@@ -49,6 +49,7 @@ AGV/
 │   └── Dockerfile
 ├── docker-compose.yml          # Redis + API + Worker + 可选本地 Mongo；Mongo 连接优先读 `server/.env`
 ├── scripts/                    # `stress-story-analysis.mjs`：并发 `POST /api/generate/story`（测 Redis `story` 队列 + Worker）
+│                               # `video-process.sh`：两段视频拼接+连接处锐化、去人声
 ├── server/.env.example         # 复制为 `server/.env`：远程库（如 beeseen）或 `mongodb://mongo:27017` 本地联调
 ├── .env.example                # 与 web 保持一致的核心变量命名
 └── README.md
@@ -183,7 +184,17 @@ npm run dev
 
 默认端口：`http://localhost:3003`
 
-**`/api` 与后端端口：** 默认在 `client/.env.development` 中设置 **`VITE_API_ORIGIN=http://localhost:3011`** 时，前端 `fetch` / `EventSource` 会直连 **`http://localhost:3011/api/...`**，开发者工具 Network 里会看到 **3011**，而页面仍在 **3003** 的 Vite 上（**3003** 为前端 dev 端口）。若清空 `VITE_API_ORIGIN`，则退回相对路径 **`/api`**，由 Vite 代理到 **`CWEI_PORT`**（与 Docker API 映射一致）。代理连不上后端时，浏览器里会看到 **`/api/...` 为 500**（Vite 代理错误），而非后端 JSON。
+**`/api` 与端口（避免间歇性 404）：**
+
+| 端口 | 服务 |
+|------|------|
+| **3003** | Vite 前端（浏览器只访问此端口） |
+| **3001** | AGV Express API（`CWEI_PORT`，由 Vite 把 `/api` 代理过来） |
+
+- 开发时 **不要** 设置 `VITE_API_ORIGIN`：请求为 `http://localhost:3003/api/...`（同源、无 CORS），代理目标为 `client/.env.development` 里的 **`CWEI_PORT=3001`**。
+- **`npm run dev` 启动前** 会执行 `scripts/verify-agv-api.mjs`：确认 3001 上是 AGV（`/health` 返回 `service: "agv-api"`），否则拒绝启动，避免 3001 被其它 Node 项目占用时出现 `Cannot POST /api/projects`。
+- **正确启动顺序**：先 VS Code「API (Node)」或 `cd server && npm run dev` → 再 `cd client && npm run dev`。
+- 若 API 启动报 `EADDRINUSE`：`lsof -ti :3001 | xargs kill -9` 后只启动本仓库 API。
 
 ### 情节分析入队压测（1000 并发 → Redis `story` 队列 + Worker）
 
@@ -207,7 +218,7 @@ node scripts/stress-story-analysis.mjs
 ## 主流程（页面步骤）
 
 1. **输入文本** → `POST /api/generate/story` → 情节与 `clips`（`analyze_story` 完成后会对相邻 clip 做**角色在场回填**：下一段已出场且本段无「进入」描写的角色会补入上一段 `characters`，避免环境镜头漏掉同床配角）  
-2. **生成首尾帧 Prompt**（仅 LLM，不写图）→ `POST /api/generate/beat-prompts` → `clips.storyboardPlan` **v2 扁平**：首/末帧含中文 `description`、中文 `scene_prompt`（镜头/场景/动作，无外貌；规则对齐 waoowaoo 分镜规划）、`characters[].outfit/emotion`；衔接字段 `transition_from_prev` 在首批首尾帧图完成后由 Worker 按集批量 LLM 写入（首 clip 为空），`episodes.status` → `beat_prompts_ready`  
+2. **生成首尾帧 Prompt**（仅 LLM，不写图）→ `POST /api/generate/beat-prompts` → `clips.storyboardPlan` **v2 扁平**：首/末帧含中文 `description`、中文 `scene_prompt`（镜头/场景/动作，无外貌；规则对齐统一分镜规划）、`characters[].outfit/emotion`；衔接字段 `transition_from_prev` 在首批首尾帧图完成后由 Worker 按集批量 LLM 写入（首 clip 为空），`episodes.status` → `beat_prompts_ready`
 3. **首尾帧 Prompt 页**：在「视觉资产库」为角色/场景上传或 AI 生成参考图（**角色形象图必须为 9:16**，前端声明并校验上传宽高比；可选本情节 `referenceOverrides`）；可编辑 `scene_prompt` 与角色衣着/情绪并保存。  
 4. **生成首尾帧图片** → `POST /api/generate/images`（带 `episodeId`）→ Worker **阶段化**：按 `outfit+emotion` 与基础形象生成/复用 **角色状态图**（Mongo `characterStates` + Redis `cs:{hash}`），再以场景参考 + 状态参考调用 **`multi_ref_image_gen`**（FAL 默认单参考，多参考能力由账号「AI 设置」中 `supportsMultiReference` / `maxReferenceImages` 声明；Gemini/豆包为预留骨架）→ `first_frame.imageUrl` / `last_frame.imageUrl`；完成后 `episodes.status` → `images_ready`  
 5. **生成视频** → `POST /api/generate/videos` → 读首尾帧图 URL + 文案（含 `transition_from_prev`）请求视频 API，写入 `clips.videoUrl`，`episodes.status` → `video_ready`  
@@ -245,6 +256,17 @@ node scripts/stress-story-analysis.mjs
 - `GET /api/tasks/:taskId`
 - `GET /api/sse?token=<token>`  
   SSE 事件：`task.progress`、`task.completed`、`task.error`
+
+## 视频后处理工具（从 web 迁移）
+
+新增脚本：`scripts/video-process.sh`
+
+- 拼接并锐化连接处：
+  - `scripts/video-process.sh merge <clip_a> <clip_b> <output_mp4> [transition_seconds]`
+- 去人声（保留画面）：
+  - `scripts/video-process.sh remove-vocals <input_mp4> <output_mp4> [soft|hard]`
+
+说明：`ffmpeg` 去人声属于近似抑制（中置抵消），若源素材人声与伴奏高度重叠，建议改用 AI 分离工具（Demucs/UVR）获得更干净结果。
 
 ## 情节分析一直转圈如何排查
 

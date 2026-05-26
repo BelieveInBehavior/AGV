@@ -2,7 +2,7 @@
  * Skill: 故事分析
  *
  * 纯 LLM 函数 — OpenAI 兼容 API（与 Worker 对齐）
- * Prompt 风格对齐 waoowaoo（中文）
+ * Prompt 风格对齐统一写作规范（中文）
  */
 
 import config from '../config/index.js';

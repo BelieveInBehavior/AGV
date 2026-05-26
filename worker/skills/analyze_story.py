@@ -3,7 +3,7 @@ Skill: 故事分析 (Python)
 
 纯函数 — 无 DB 副作用
 输入文本 → OpenAI 兼容 API → 结构化角色/场景/情节片段
-Prompt 风格对齐 waoowaoo（中文）
+Prompt 风格对齐统一写作规范（中文）
 """
 
 from typing import Any

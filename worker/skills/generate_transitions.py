@@ -1,6 +1,6 @@
 """
 首尾帧之间衔接描述（中文）：按剧集一批 LLM，供后续视频阶段使用。
-对齐 waoowaoo 镜头连续性思维。
+对齐统一镜头连续性思维。
 """
 
 from __future__ import annotations

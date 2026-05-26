@@ -54,7 +54,7 @@ storyboardPlan = {
   "included_character_ids": ["1", "2"],
   "first_frame": {
     "description": "string (zh)",
-    "scene_prompt": "string (zh) — 镜头/构图/动作/光线, 无人物外貌（对齐 waoowaoo 分镜规则）",
+    "scene_prompt": "string (zh) — 镜头/构图/动作/光线, 无人物外貌（对齐统一分镜规则）",
     "characters": [
       {"name": "张三", "outfit": "黑色西装", "emotion": "愤怒, 紧握拳头"}
     ],

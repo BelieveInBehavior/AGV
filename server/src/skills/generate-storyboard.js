@@ -2,7 +2,7 @@
  * Skill: 分镜生成
  *
  * 纯 LLM 函数 — OpenAI 兼容 API（与 Worker 对齐）
- * Prompt 风格对齐 waoowaoo agent_storyboard_plan（中文）
+ * Prompt 风格对齐统一分镜规范（中文）
  */
 
 import config from '../config/index.js';
