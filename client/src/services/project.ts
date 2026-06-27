@@ -2,6 +2,30 @@ import { API_BASE } from '../config/api';
 import { getToken, assertApiAuthorized, ensureSessionValid, forceRelogin } from './auth';
 import type { Project, Episode, Clip, Task, SseEvent, StoryboardMode, EpisodeEvaluation } from '../types/project';
 
+export interface ArkVideoContentItem {
+  type: 'text' | 'image_url' | 'video_url' | 'audio_url';
+  text?: string;
+  role?: 'reference_image' | 'reference_video' | 'reference_audio';
+  image_url?: { url: string };
+  video_url?: { url: string };
+  audio_url?: { url: string };
+}
+
+export interface CreateArkVideoTaskInput {
+  content?: ArkVideoContentItem[];
+  prompt?: string;
+  referenceImageUrls?: string[];
+  referenceVideoUrl?: string;
+  referenceAudioUrl?: string;
+  model?: string;
+  generateAudio?: boolean;
+  ratio?: string;
+  duration?: number;
+  watermark?: boolean;
+  apiKey?: string;
+  baseUrl?: string;
+}
+
 function authHeaders() {
   return { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` };
 }
@@ -204,6 +228,29 @@ export async function evaluateEpisode(
     body: JSON.stringify({ projectId, episodeId, scopes }),
   });
   return data.taskId;
+}
+
+export async function createArkVideoTask(input: CreateArkVideoTaskInput): Promise<Record<string, unknown>> {
+  const data = await request<{ result: Record<string, unknown> }>(`${API_BASE}/generate/videos/ark/tasks`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  return data.result;
+}
+
+export async function getArkVideoTask(
+  taskId: string,
+  options?: { apiKey?: string; baseUrl?: string }
+): Promise<Record<string, unknown>> {
+  const query = new URLSearchParams();
+  if (options?.apiKey) query.set('apiKey', options.apiKey);
+  if (options?.baseUrl) query.set('baseUrl', options.baseUrl);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  const data = await request<{ result: Record<string, unknown> }>(
+    `${API_BASE}/generate/videos/ark/tasks/${encodeURIComponent(taskId)}${suffix}`,
+    { method: 'GET' },
+  );
+  return data.result;
 }
 
 // ── Tasks ────────────────────────────────────────────────────────────

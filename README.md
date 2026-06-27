@@ -102,6 +102,7 @@ Celery Worker
 - `FAL_API_KEY` / `FAL_IMAGE_MODEL`  
 - `FAL_IMAGE_I2I_MODEL`（可选，默认 `fal-ai/flux/dev/image-to-image`）：存在参考图时首尾帧/分镜生图优先走图生图，失败回退文生图
 - `VIDEO_API_BASE_URL` / `VIDEO_API_KEY` / `VIDEO_MODEL`（预留）
+- `ARK_VIDEO_API_BASE_URL` / `ARK_VIDEO_API_KEY` / `ARK_VIDEO_MODEL`（Ark 内容生视频独立接口默认配置）
 - **`AGV_MOCK_AI`**：**默认关闭**（未设置或空白视为关闭）；设为 `1` / `true` / `yes` / `on` 等任意非 `0` / `false` / `no` / `off` 的值则开启 Mock，所有模型相关调用走 **固定占位 + 约 5s 延迟**（联调无 Key 时用）。走真实 API 时需配置 `LLM_API_KEY`、`FAL_API_KEY` 等，并勿开启 Mock
 - **`AGV_MOCK_AI_DELAY_MS`**：Mock 路径下的固定等待（毫秒），默认 `5000`（API 与 Worker 均读取）
 - **`CHARACTER_STATE_CACHE_TTL_SECONDS`**：角色状态图 Redis 缓存 TTL（默认 7 天）；MongoDB `characterStates` 集合冷热存储状态图 URL
@@ -253,6 +254,13 @@ node scripts/stress-story-analysis.mjs
   传入 `episodeId` 且未指定 `panelId`/`panelIds` 时，会为该集内待生成的 panels 以及 **扁平首尾帧** 尚未带图的首、末帧各生成一张图；含角色状态图缓存与 `multi_ref_image_gen`。完成后 `episodes.status` = `images_ready`。
 - `POST /api/generate/videos`  
   需 `projectId` + `episodeId`。对已有首尾帧图且尚无 `videoUrl` 的 clip 调用视频 API（`VIDEO_API_BASE_URL` / 用户 AI 设置中的 video；请求体为 JSON：`model`、`prompt`、`first_frame_url`、`last_frame_url`、`aspect_ratio`）。未配置或失败时写入短占位 MP4。完成后 `episodes.status` = `video_ready`。
+- `POST /api/generate/videos/ark/tasks`  
+  独立 Ark 内容生视频提交接口（不依赖 `projectId` / `episodeId`，但需登录）。支持两种入参：  
+  1) 直接传 `content`（与 Ark `contents/generations/tasks` 一致，含 `text` + `image_url`/`video_url`/`audio_url`）  
+  2) 传简化字段：`prompt`、`referenceImageUrls[]`、`referenceVideoUrl`、`referenceAudioUrl`（服务端自动组装 `content`）  
+  其他参数：`model`、`generateAudio`、`ratio`、`duration`、`watermark`；可选 `apiKey` / `baseUrl` 覆盖默认配置。返回 Ark 原始任务提交结果。
+- `GET /api/generate/videos/ark/tasks/:taskId`  
+  独立 Ark 任务查询接口。通过 `taskId` 拉取 Ark 侧任务状态/结果；可选 `apiKey` / `baseUrl` 覆盖默认配置。
 - `GET /api/tasks/:taskId`
 - `GET /api/sse?token=<token>`  
   SSE 事件：`task.progress`、`task.completed`、`task.error`

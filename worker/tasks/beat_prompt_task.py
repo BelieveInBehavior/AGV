@@ -5,7 +5,6 @@ Celery Task: 仅生成首尾帧方案（LLM → storyboardPlan，含 scene_promp
 """
 
 from datetime import datetime, timezone
-
 from celery_app import app
 from skills.generate_beat_frames import generate_beat_frames_skill
 from utils.ai_settings import get_ai_settings_for_project
