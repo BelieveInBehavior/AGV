@@ -31,12 +31,13 @@ _STORY_CRITERIA = {
 _BEAT_CRITERIA = {
     'completeness': '完整性：每个 clip 是否都有 first_frame 与 last_frame',
     'story_alignment': '剧情对齐：首帧对应本段开始，尾帧对应本段结束',
-    'atomicity': '原子性：首帧到尾帧之间是否只有一种主要变化（空间/姿态/道具/事件进度），不得同时跨空间+跨道具+跨姿态；末帧出现的新道具是否在首帧可见或 motion_prompt 有交代',
+    'atomicity': '原子性：首帧到尾帧之间是否只有一种主要变化（空间/姿态/道具/事件进度），不得同时跨空间+跨道具+跨姿态',
     'character_consistency': '角色一致性：帧中角色名是否来自本段角色/项目角色库',
-    'scene_prompt_quality': 'scene_prompt 质量：是否遵守 G1-G8 镜头和构图规则',
+    'scene_prompt_quality': '首尾帧 scene_prompt 质量：是否适合作为静态生图 prompt，遵守 G1-G8 镜头和构图规则',
+    'video_prompt_quality': 'video_prompt 质量：是否遵守结构化字段要求，适合作为单镜头视频 prompt',
     'visual_only_compliance': '纯视觉合规：scene_prompt 是否避免气味、声音、温度、心理等非视觉描述',
     'inter_clip_continuity': '跨 clip 连贯性：上一段尾帧到下一段首帧是否可衔接',
-    'motion_readiness': '视频运动可用性：motion_prompt / transition 是否清晰且不矛盾',
+    'motion_readiness': '视频运动可用性：video_prompt 的运镜字段、时长字段、首末帧衔接是否清晰且不矛盾',
     'reference_friendliness': '参考图友好：scene_prompt 是否避免写入人物固定外貌，保留给参考图承担',
 }
 
@@ -93,7 +94,7 @@ _STORY_SYSTEM_PROMPT = """你是专业剧本统筹与动画制片质检，负责
 _BEAT_SYSTEM_PROMPT = """你是专业分镜导演与 AI 生图质检，负责评估「首尾帧 Prompt」输出质量。
 
 【任务】
-根据所有情节 clips 与 storyboardPlan，整体评估首帧/尾帧、运动描述、连续性说明是否适合后续生图和视频生成。
+根据所有情节 clips 与 storyboardPlan，整体评估首帧/尾帧静态生图 prompt 与 video_prompt 是否适合后续生图和视频生成。
 你只评估，不改写，不重新生成。
 
 【关键规则 G1-G8】
@@ -101,17 +102,19 @@ G1. 景别一致：所选景别严格决定可见范围，不出现画外元素
 G2. 液体局部化：泪/汗/血写具体部位
 G3. 姿势简化：避免复杂跪姿、透视扭曲
 G4. 单一视觉焦点：每帧一个主要关注点
-G5. 强制景别开头：scene_prompt 以特写/近景/中景/中远景/全景/广角开头
-G6. 角色完整性：可见角色都必须写明位置、姿态、动作
+G5. 结构完整：video_prompt 必须包含 景别 / 机位 / 运镜 / 内容 / 时长 / 情绪 / 角色说话 七段
+G6. 角色完整性：可见角色都必须在 scene_prompt 或 video_prompt 内容中得到明确呈现
 G7. 交互指向明确：多角色动作要写清主语、宾语、空间关系
-G8. 只写可视化信息：不得写气味、声音、温度、触感、心理状态
+G8. 只写可视化信息：内容字段不得写气味、声音、温度、触感、心理状态；情绪字段可写整体氛围
 
 【额外规则】
 - scene_prompt 不应写人物固定外貌（脸型、发色、默认服装等），外貌由参考图承担
+- video_prompt 应描述单个连续镜头，而不是静态首帧 prompt
 - first_frame 应对应 clip 开始状态，last_frame 应对应 clip 结束状态
-- motion_prompt 应描述首帧到尾帧之间的动作/运镜变化
+- 运镜字段应描述镜头如何推进/摇移/停留，不应与静态首帧内容矛盾
+- 时长字段必须为不超过 15 秒的整数秒
 - transition_from_prev 应能帮助上一 clip 到当前 clip 衔接
-- 原子性检查：首帧到尾帧之间不得同时跨空间、跨姿态、跨道具、跨事件进度；如果末帧出现新道具，必须在首帧可见或 motion_prompt 明确交代拿起过程
+- 原子性检查：首帧到尾帧之间不得同时跨空间、跨姿态、跨道具、跨事件进度
 - 特别警惕「人物从卧室直接到厨房且手里突然出现锅铲/食物已在锅中」这类跨空间+道具凭空出现的问题，需标为 major 或 critical
 
 【评分】
@@ -135,6 +138,7 @@ G8. 只写可视化信息：不得写气味、声音、温度、触感、心理�
     "atomicity": {{"score": 0, "comment": "中文"}},
     "character_consistency": {{"score": 0, "comment": "中文"}},
     "scene_prompt_quality": {{"score": 0, "comment": "中文"}},
+    "video_prompt_quality": {{"score": 0, "comment": "中文"}},
     "visual_only_compliance": {{"score": 0, "comment": "中文"}},
     "inter_clip_continuity": {{"score": 0, "comment": "中文"}},
     "motion_readiness": {{"score": 0, "comment": "中文"}},
@@ -310,6 +314,7 @@ def _compact_beat_payload(project: dict, clips: list[dict]) -> dict[str, Any]:
                 'summary': c.get('summary'),
                 'characters': c.get('characters') or [],
                 'location': c.get('location'),
+                'duration': c.get('duration'),
                 'storyboardPlan': _compact_plan(c.get('storyboardPlan')),
             }
             for c in clips
@@ -321,9 +326,7 @@ def _compact_plan(plan: Any) -> dict[str, Any] | None:
     if not isinstance(plan, dict):
         return None
     return {
-        'dramatic_beat': str(plan.get('dramatic_beat') or '')[:800],
-        'motion_prompt': str(plan.get('motion_prompt') or '')[:800],
-        'continuity_notes': str(plan.get('continuity_notes') or '')[:800],
+        'video_prompt': str(plan.get('video_prompt') or '')[:1200],
         'transition_from_prev': str(plan.get('transition_from_prev') or '')[:800],
         'included_character_ids': plan.get('included_character_ids') or [],
         'first_frame': _compact_frame(plan.get('first_frame')),

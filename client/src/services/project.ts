@@ -103,6 +103,26 @@ export async function generateProjectReferenceImage(
   return { project: data.project, imageUrl: data.imageUrl };
 }
 
+export async function uploadProjectImage(
+  projectId: string,
+  body: {
+    dataUrl: string;
+    fileName?: string;
+    scope?: 'project-reference' | 'clip-reference';
+    episodeId?: string;
+    clipId?: string;
+  },
+): Promise<{ url: string; objectKey: string }> {
+  const data = await request<{ url: string; objectKey: string }>(
+    `${API_BASE}/projects/${projectId}/uploads/image`,
+    {
+      method: 'POST',
+      body: JSON.stringify(body),
+    },
+  );
+  return { url: data.url, objectKey: data.objectKey };
+}
+
 export async function patchClip(
   projectId: string,
   episodeId: string,
@@ -110,6 +130,7 @@ export async function patchClip(
   body: {
     referenceOverrides?: Clip['referenceOverrides'] | null;
     beatPrompts?: {
+      video_prompt?: string;
       first_frame?: {
         scene_prompt?: string;
         description?: string;

@@ -1,11 +1,11 @@
 import { useRef, useState } from 'react';
-import {
-  CHARACTER_REFERENCE_RATIO,
-  isCharacterReferenceAspectRatio,
-  readImageFileDimensions,
-} from '../../config/visual-assets';
+import { CHARACTER_REFERENCE_RATIO } from '../../config/visual-assets';
 import type { Clip, Project } from '../../types/project';
-import { patchProjectReferences, generateProjectReferenceImage } from '../../services/project';
+import {
+  patchProjectReferences,
+  generateProjectReferenceImage,
+  uploadProjectImage,
+} from '../../services/project';
 
 type Props = {
   project: Project;
@@ -122,14 +122,6 @@ export function VisualAssetLibrary({
     if (!file) return;
     setBusy(`up:${kind}:${name}`);
     try {
-      if (kind === 'character') {
-        const { width, height } = await readImageFileDimensions(file);
-        if (!isCharacterReferenceAspectRatio(width, height)) {
-          throw new Error(
-            `角色形象图必须为 ${CHARACTER_REFERENCE_RATIO}（当前约 ${width}×${height}）`,
-          );
-        }
-      }
       const dataUrl = await new Promise<string>((resolve, reject) => {
         const r = new FileReader();
         r.onload = () => resolve(String(r.result || ''));
@@ -139,11 +131,16 @@ export function VisualAssetLibrary({
       if (!dataUrl.startsWith('data:image/')) {
         throw new Error('请选择图片文件');
       }
+      const { url } = await uploadProjectImage(projectId, {
+        dataUrl,
+        fileName: file.name,
+        scope: 'project-reference',
+      });
       const p = await patchProjectReferences(projectId, {
         episodeId,
         ...(kind === 'character'
-          ? { characters: [{ name, referenceImageUrl: dataUrl }] }
-          : { locations: [{ name, referenceImageUrl: dataUrl }] }),
+          ? { characters: [{ name, referenceImageUrl: url }] }
+          : { locations: [{ name, referenceImageUrl: url }] }),
       });
       onProjectUpdated(p);
     } catch (e) {
@@ -197,8 +194,7 @@ export function VisualAssetLibrary({
             </span>
           </div>
           <p className="visual-asset-ratio-spec">
-            角色形象参考图固定为竖屏 <strong>{CHARACTER_REFERENCE_RATIO}</strong>（推荐 720×1280）。
-            AI 生成将自动按此比例输出；本地上传会校验宽高比，不符将无法保存。
+            角色形象参考图推荐竖屏 <strong>{CHARACTER_REFERENCE_RATIO}</strong>（推荐 720×1280），但不再强制限制比例。
           </p>
           <div className="visual-asset-grid">
             {project.characters.map((c) => {
@@ -244,15 +240,15 @@ export function VisualAssetLibrary({
                     >
                       {isBusy ? '…' : 'AI 生成'}
                     </button>
-                    <button
-                      type="button"
-                      className="btn-ghost btn-small"
-                      disabled={disabled || Boolean(busy)}
-                      onClick={() => fileRef.current[id]?.click()}
-                      title={`上传 ${CHARACTER_REFERENCE_RATIO} 竖屏图`}
-                    >
-                      上传 {CHARACTER_REFERENCE_RATIO}
-                    </button>
+                    {disabled || Boolean(busy) ? (
+                      <button type="button" className="btn-ghost btn-small" disabled>
+                        上传角色图
+                      </button>
+                    ) : (
+                      <label htmlFor={id} className="btn-ghost btn-small" role="button" tabIndex={0}>
+                        上传角色图
+                      </label>
+                    )}
                     {refUrl ? (
                       <button
                         type="button"
@@ -264,6 +260,7 @@ export function VisualAssetLibrary({
                       </button>
                     ) : null}
                     <input
+                      id={id}
                       ref={(el) => {
                         fileRef.current[id] = el;
                       }}
@@ -327,14 +324,15 @@ export function VisualAssetLibrary({
                     >
                       {isBusy ? '…' : 'AI 生成'}
                     </button>
-                    <button
-                      type="button"
-                      className="btn-ghost btn-small"
-                      disabled={disabled || Boolean(busy)}
-                      onClick={() => fileRef.current[id]?.click()}
-                    >
-                      上传
-                    </button>
+                    {disabled || Boolean(busy) ? (
+                      <button type="button" className="btn-ghost btn-small" disabled>
+                        上传
+                      </button>
+                    ) : (
+                      <label htmlFor={id} className="btn-ghost btn-small" role="button" tabIndex={0}>
+                        上传
+                      </label>
+                    )}
                     {refUrl ? (
                       <button
                         type="button"
@@ -346,6 +344,7 @@ export function VisualAssetLibrary({
                       </button>
                     ) : null}
                     <input
+                      id={id}
                       ref={(el) => {
                         fileRef.current[id] = el;
                       }}

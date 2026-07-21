@@ -45,7 +45,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '25mb' }));
 
 app.get('/health', (_, res) => {
   res.json({ success: true, message: 'ok', service: 'agv-api' });

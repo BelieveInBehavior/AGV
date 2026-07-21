@@ -37,6 +37,13 @@ const config = {
     apiKey: process.env.FAL_API_KEY || '',
     imageModel: process.env.FAL_IMAGE_MODEL || 'fal-ai/flux/schnell',
   },
+  oss: {
+    accessKeyId: process.env.OSS_ACCESS_KEY_ID || '',
+    accessKeySecret: process.env.OSS_ACCESS_KEY_SECRET || '',
+    bucket: process.env.OSS_BUCKET || '',
+    endpoint: process.env.OSS_ENDPOINT || '',
+    folder: process.env.OSS_FOLDER || 'AGV',
+  },
   redis: {
     url: process.env.REDIS_URL || 'redis://localhost:6379/0',
   },

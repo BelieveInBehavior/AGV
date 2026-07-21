@@ -1,5 +1,5 @@
 """
-Celery Task: 视频生成（首尾帧图 + 运动描述 → 第三方视频 API）
+Celery Task: 视频生成（首尾帧图 + 结构化 Prompt → 第三方视频 API）
 
 需配置环境变量或 Mongo 用户 AI 设置中的 video：baseUrl、apiKey、model。
 未配置时写入占位 URL，便于联调前端流程。
@@ -42,6 +42,26 @@ def _extract_video_url(data: Any) -> str | None:
     if isinstance(d, dict):
         return _extract_video_url(d)
     return None
+
+
+def _build_video_prompt(plan: dict, clip: dict) -> str:
+    video_prompt = str(plan.get('video_prompt') or '').strip()
+    first = ((plan.get('first_frame') or {}).get('scene_prompt') or '').strip()
+    last = ((plan.get('last_frame') or {}).get('scene_prompt') or '').strip()
+    transition = str(plan.get('transition_from_prev') or '').strip()
+    duration = clip.get('duration')
+    parts = []
+    if video_prompt:
+        parts.append(video_prompt)
+    if duration:
+        parts.append(f'时长：{duration}秒')
+    if first and not video_prompt:
+        parts.append(f'首帧提示：\n{first}')
+    if last and not video_prompt:
+        parts.append(f'末帧提示：\n{last}')
+    if transition:
+        parts.append(f'与上一段衔接：{transition}')
+    return '\n\n'.join(parts)
 
 
 def _request_video(
@@ -129,14 +149,7 @@ def generate_videos(
                 continue
             if clip.get('videoUrl'):
                 continue
-            prompt = '\n'.join(
-                x for x in (
-                    plan.get('dramatic_beat'),
-                    plan.get('motion_prompt'),
-                    plan.get('continuity_notes'),
-                    plan.get('transition_from_prev'),
-                ) if x
-            )
+            prompt = _build_video_prompt(plan, clip)
             jobs.append((clip, plan, {'prompt': prompt, 'first': ff, 'last': lf}))
 
         if not jobs:

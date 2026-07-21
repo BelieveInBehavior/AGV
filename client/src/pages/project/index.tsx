@@ -804,7 +804,7 @@ export default function ProjectPage() {
             {runningTasks.length > 0 && !hasStoryboardVisualPlan ? (
               <div className="analyzing-state">
                 <div className="spinner" />
-                <p>AI 正在生成首尾帧英文生图 Prompt 与运动描述…</p>
+                <p>AI 正在生成首尾帧结构化 Prompt…</p>
               </div>
             ) : !hasStoryboardVisualPlan ? (
               <p className="empty-hint">请先在情节页点击「生成首尾帧 Prompt」或使用高级经典分镜</p>
@@ -844,18 +844,6 @@ export default function ProjectPage() {
                             <span className="clip-duration">⏱ {clip.duration}s</span>
                           )}
                         </h3>
-                        <p className="beat-dramatic">
-                          <strong>节拍：</strong>
-                          {plan.dramatic_beat}
-                        </p>
-                        <p className="beat-motion">
-                          <strong>运动与镜头：</strong>
-                          {plan.motion_prompt}
-                        </p>
-                        <p className="beat-continuity">
-                          <strong>连贯：</strong>
-                          {plan.continuity_notes}
-                        </p>
                         <BeatKeyframeEditor
                           clip={clip}
                           project={project}

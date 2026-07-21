@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { CHARACTER_REFERENCE_RATIO } from '../../config/visual-assets';
 import type { BeatCharacterPose, Clip, Project, StoryboardPlan } from '../../types/project';
-import { patchClip } from '../../services/project';
+import { patchClip, uploadProjectImage } from '../../services/project';
 import {
   collectClipReferenceUrls,
   effectiveCharacterRefUrl,
@@ -40,8 +40,9 @@ export function BeatKeyframeEditor({
 }: Props) {
   const { first_frame: ff, last_frame: lf } = resolveBeatFrames(plan);
 
-  const [firstScene, setFirstScene] = useState(ff?.scene_prompt || ff?.imagePrompt || '');
-  const [lastScene, setLastScene] = useState(lf?.scene_prompt || lf?.imagePrompt || '');
+  const [videoPrompt, setVideoPrompt] = useState(plan.video_prompt || '');
+  const [firstScene, setFirstScene] = useState(ff?.scene_prompt || '');
+  const [lastScene, setLastScene] = useState(lf?.scene_prompt || '');
   const [firstChars, setFirstChars] = useState<BeatCharacterPose[]>(() => cloneChars(ff?.characters));
   const [lastChars, setLastChars] = useState<BeatCharacterPose[]>(() => cloneChars(lf?.characters));
   const [openFirst, setOpenFirst] = useState(false);
@@ -51,8 +52,9 @@ export function BeatKeyframeEditor({
 
   useEffect(() => {
     const { first_frame: f, last_frame: l } = resolveBeatFrames(plan);
-    setFirstScene(f?.scene_prompt || f?.imagePrompt || '');
-    setLastScene(l?.scene_prompt || l?.imagePrompt || '');
+    setVideoPrompt(plan.video_prompt || '');
+    setFirstScene(f?.scene_prompt || '');
+    setLastScene(l?.scene_prompt || '');
     setFirstChars(cloneChars(f?.characters));
     setLastChars(cloneChars(l?.characters));
   }, [clip.clipId, plan]);
@@ -64,6 +66,7 @@ export function BeatKeyframeEditor({
     try {
       const updated = await patchClip(projectId, episodeId, clip.clipId, {
         beatPrompts: {
+          video_prompt: videoPrompt,
           first_frame: {
             scene_prompt: firstScene,
             description: ff?.description || '',
@@ -113,11 +116,18 @@ export function BeatKeyframeEditor({
         r.readAsDataURL(file);
       });
       if (!dataUrl.startsWith('data:image/')) throw new Error('请选择图片');
+      const { url } = await uploadProjectImage(projectId, {
+        dataUrl,
+        fileName: file.name,
+        scope: 'clip-reference',
+        episodeId,
+        clipId: clip.clipId,
+      });
       const prev = clip.referenceOverrides || {};
       const updated = await patchClip(projectId, episodeId, clip.clipId, {
         referenceOverrides: {
           characterImages: { ...(prev.characterImages || {}) },
-          locationImage: dataUrl,
+          locationImage: url,
         },
       });
       onClipUpdated(updated);
@@ -180,6 +190,19 @@ export function BeatKeyframeEditor({
           {plan.transition_from_prev}
         </p>
       ) : null}
+
+      <div className="beat-prompt-slot beat-video-prompt-slot">
+        <div className="beat-prompt-slot-head">
+          <strong>视频 Prompt（结构化中文）</strong>
+        </div>
+        <textarea
+          className="beat-prompt-textarea"
+          rows={8}
+          value={videoPrompt}
+          onChange={(e) => setVideoPrompt(e.target.value)}
+          disabled={disabled}
+        />
+      </div>
 
       <div className="beat-ref-chips">
         <span className="beat-ref-chips-label">本情节引用</span>
@@ -248,7 +271,7 @@ export function BeatKeyframeEditor({
       <div className="beat-prompt-edit-grid">
         <div className="beat-prompt-slot">
           <div className="beat-prompt-slot-head">
-            <strong>首帧 scene_prompt（EN，无外貌描写）</strong>
+            <strong>首帧 Prompt（静态生图）</strong>
             <button type="button" className="btn-ghost btn-tiny" onClick={() => setOpenFirst((v) => !v)}>
               {openFirst ? '收起' : '展开编辑'}
             </button>
@@ -289,7 +312,7 @@ export function BeatKeyframeEditor({
         </div>
         <div className="beat-prompt-slot">
           <div className="beat-prompt-slot-head">
-            <strong>末帧 scene_prompt（EN，无外貌描写）</strong>
+            <strong>末帧 Prompt（静态生图）</strong>
             <button type="button" className="btn-ghost btn-tiny" onClick={() => setOpenLast((v) => !v)}>
               {openLast ? '收起' : '展开编辑'}
             </button>

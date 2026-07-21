@@ -157,6 +157,15 @@ button:disabled {
   cursor: pointer;
   transition: border-color 0.2s, color 0.2s;
 }
+label.btn-ghost {
+  display: inline-block;
+  text-align: center;
+}
+.btn-ghost:disabled,
+label.btn-ghost[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .btn-ghost:hover { border-color: #4c6ef5; color: #e6e8f2; }
 
 .error-banner {

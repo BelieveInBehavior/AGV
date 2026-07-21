@@ -13,6 +13,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react(), agvApiProxyGuard(apiPort)],
     server: {
+      host: '::',
       port: 3003,
       proxy: {
         '/api': {

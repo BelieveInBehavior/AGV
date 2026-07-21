@@ -76,3 +76,25 @@ export async function verifyCode(phone: string, code: string): Promise<VerifyCod
   });
   return response.json();
 }
+
+const DEV_AUTO_LOGIN = import.meta.env.VITE_DEV_AUTO_LOGIN === '1';
+const DEV_PHONE = String(import.meta.env.VITE_DEV_PHONE || '15000361623');
+const DEV_CODE = String(import.meta.env.VITE_DEV_CODE || '123456');
+
+/** 开发模式：用测试账号静默登录，跳过登录页 */
+export async function tryDevAutoLogin(): Promise<boolean> {
+  if (!DEV_AUTO_LOGIN || getToken()) return Boolean(getToken());
+  try {
+    const result = await verifyCode(DEV_PHONE, DEV_CODE);
+    if (!result.success || !result.token) return false;
+    setToken(result.token);
+    if (result.user_info) setUserInfo(result.user_info);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function isDevAutoLoginEnabled() {
+  return DEV_AUTO_LOGIN;
+}

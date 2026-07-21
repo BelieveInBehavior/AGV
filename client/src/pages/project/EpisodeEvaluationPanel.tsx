@@ -33,6 +33,7 @@ const CRITERION_LABELS: Record<string, string> = {
   completeness: '完整性',
   story_alignment: '剧情对齐',
   scene_prompt_quality: 'Prompt 质量',
+  video_prompt_quality: '视频 Prompt',
   visual_only_compliance: '纯视觉合规',
   inter_clip_continuity: '跨段连贯',
   motion_readiness: '视频运动可用',

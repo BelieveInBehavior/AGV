@@ -8,7 +8,7 @@ export interface Character {
   role: 'protagonist' | 'antagonist' | 'supporting';
   /** LLM 生成的角色视觉 prompt（外貌、服装、体态等） */
   imagePrompt?: string;
-  /** 项目级角色参考图 URL（https 或 data URL）；必须为竖屏 9:16 */
+  /** 项目级角色参考图 URL（新数据为 OSS https URL，兼容旧 data URL）；必须为竖屏 9:16 */
   referenceImageUrl?: string | null;
 }
 
@@ -127,7 +127,7 @@ export interface BeatCharacterPose {
 
 export interface BeatFrameSlot {
   description: string;
-  /** v2：英文场景/镜头/动作，不含外貌 */
+  /** v3：结构化中文 prompt（景别/机位/运镜/内容/时长/情绪/角色说话） */
   scene_prompt?: string;
   /** 旧版合一 prompt */
   imagePrompt?: string;
@@ -140,9 +140,8 @@ export interface BeatFrameSlot {
 }
 
 export interface StoryboardPlan {
-  dramatic_beat: string;
-  motion_prompt: string;
-  continuity_notes: string;
+  /** 单镜头视频 prompt（结构化中文） */
+  video_prompt?: string;
   /** 与上一情节衔接（生图完成后批处理写入；首段为空） */
   transition_from_prev?: string;
   included_character_ids?: string[];
@@ -177,7 +176,7 @@ export interface Clip {
   /** 首尾帧链路生成的视频 URL（Mongo clip 顶层字段） */
   videoUrl?: string | null;
   panels: Panel[];
-  /** 本情节临时覆盖参考图（角色名 → URL；locationImage 覆盖当前场景） */
+  /** 本情节临时覆盖参考图（角色名 → URL；locationImage 覆盖当前场景，优先 OSS URL） */
   referenceOverrides?: {
     characterImages?: Record<string, string>;
     locationImage?: string | null;

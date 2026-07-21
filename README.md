@@ -103,6 +103,8 @@ Celery Worker
 - `FAL_IMAGE_I2I_MODEL`（可选，默认 `fal-ai/flux/dev/image-to-image`）：存在参考图时首尾帧/分镜生图优先走图生图，失败回退文生图
 - `VIDEO_API_BASE_URL` / `VIDEO_API_KEY` / `VIDEO_MODEL`（预留）
 - `ARK_VIDEO_API_BASE_URL` / `ARK_VIDEO_API_KEY` / `ARK_VIDEO_MODEL`（Ark 内容生视频独立接口默认配置）
+- `OSS_ACCESS_KEY_ID` / `OSS_ACCESS_KEY_SECRET` / `OSS_BUCKET` / `OSS_ENDPOINT`
+- `OSS_FOLDER`（可选，默认 `AGV`；用户上传图片会写入该目录前缀）
 - **`AGV_MOCK_AI`**：**默认关闭**（未设置或空白视为关闭）；设为 `1` / `true` / `yes` / `on` 等任意非 `0` / `false` / `no` / `off` 的值则开启 Mock，所有模型相关调用走 **固定占位 + 约 5s 延迟**（联调无 Key 时用）。走真实 API 时需配置 `LLM_API_KEY`、`FAL_API_KEY` 等，并勿开启 Mock
 - **`AGV_MOCK_AI_DELAY_MS`**：Mock 路径下的固定等待（毫秒），默认 `5000`（API 与 Worker 均读取）
 - **`CHARACTER_STATE_CACHE_TTL_SECONDS`**：角色状态图 Redis 缓存 TTL（默认 7 天）；MongoDB `characterStates` 集合冷热存储状态图 URL
@@ -124,6 +126,8 @@ Celery Worker
 说明：短信模块已与 `web` 同模式实现（阿里云 Dypnsapi + 开发回退打印），验证码与冷却状态由 Redis 承载。  
 文本分析与分镜生成使用 **OpenAI 兼容 Chat Completions**（任意供应商只需提供 Base URL + API Key + 模型 ID，思路与 [Hermes-Agent](https://github.com/NousResearch/Hermes-Agent) 的多 Provider 网关一致）。账号级偏好保存在 MongoDB `user_ai_settings`，入口：**首页 → AI 设置**。  
 测试账号默认固定为：`15000361623 / 123456`（对应 `TEST_PHONE_NUMBER`、`TEST_PHONE_CODE`），登录页无需先获取验证码，可直接输入固定验证码登录。
+
+**开发环境跳过登录页：** `client/.env.development` 默认 `VITE_DEV_AUTO_LOGIN=1`，前端启动后会自动用测试账号换取 JWT，直接进入首页。若要恢复登录页，在 `client/.env.development.local` 中设 `VITE_DEV_AUTO_LOGIN=0`。
 
 ## 启动方式
 

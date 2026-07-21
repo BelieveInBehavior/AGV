@@ -8,6 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { getDB } from '../utils/db.js';
 import { authMiddleware } from '../utils/jwt.js';
 import { generateLibraryReferenceImage } from '../utils/reference-image-fal.js';
+import { uploadImageDataUrlToOss } from '../utils/oss.js';
 
 const router = Router();
 
@@ -226,6 +227,42 @@ router.patch('/:projectId/references', async (req, res) => {
   }
 });
 
+// ── POST /api/projects/:projectId/uploads/image — 上传图片到 OSS ───────
+router.post('/:projectId/uploads/image', async (req, res) => {
+  try {
+    const db = getDB();
+    const { projectId } = req.params;
+    const { dataUrl, fileName = '', scope = 'project-reference', episodeId = '', clipId = '' } = req.body || {};
+
+    const project = await db.collection('projects').findOne({ projectId, userId: req.userId });
+    if (!project) return res.status(404).json({ success: false, message: '项目不存在' });
+
+    let subDir = `project-references/${req.userId}/${projectId}`;
+    if (scope === 'clip-reference') {
+      subDir = `clip-references/${req.userId}/${projectId}/${episodeId || 'common'}/${clipId || 'common'}`;
+    } else if (scope !== 'project-reference') {
+      return res.status(400).json({ success: false, message: 'scope 仅支持 project-reference 或 clip-reference' });
+    }
+
+    const uploaded = await uploadImageDataUrlToOss({
+      dataUrl,
+      fileName,
+      subDir,
+    });
+
+    res.status(201).json({ success: true, url: uploaded.url, objectKey: uploaded.objectKey });
+  } catch (error) {
+    const message = error?.message || '上传失败';
+    const badRequestMessages = ['图片数据格式无效', '仅支持 jpg、png、webp、gif 图片', '图片内容为空'];
+    const status = badRequestMessages.includes(message)
+      ? 400
+      : message.startsWith('OSS 未配置')
+        ? 503
+        : 500;
+    res.status(status).json({ success: false, message });
+  }
+});
+
 // ── POST /api/projects/:projectId/references/generate — AI 生成单张参考图 ──
 router.post('/:projectId/references/generate', async (req, res) => {
   try {
@@ -346,7 +383,7 @@ router.patch('/:projectId/episodes/:episodeId/clips/:clipId', async (req, res) =
     }
 
     if (beatPrompts && typeof beatPrompts === 'object') {
-      const { first_frame, last_frame } = beatPrompts;
+      const { video_prompt, first_frame, last_frame } = beatPrompts;
       const ff = first_frame && typeof first_frame === 'object' ? first_frame : null;
       const lf = last_frame && typeof last_frame === 'object' ? last_frame : null;
 
@@ -360,11 +397,14 @@ router.patch('/:projectId/episodes/:episodeId/clips/:clipId', async (req, res) =
         (typeof lf.scene_prompt === 'string' ||
           Array.isArray(lf.characters) ||
           typeof lf.description === 'string');
-      if (!v2Ff && !v2Lf) {
+      if (!v2Ff && !v2Lf && typeof video_prompt !== 'string') {
         return res.status(400).json({
           success: false,
-          message: 'beatPrompts 需提供 first_frame 或 last_frame 的 scene_prompt、description 或 characters',
+          message: 'beatPrompts 需提供 video_prompt 或 first_frame / last_frame 的 scene_prompt、description 或 characters',
         });
+      }
+      if (typeof video_prompt === 'string') {
+        $set['storyboardPlan.video_prompt'] = video_prompt;
       }
       if (v2Ff) {
         if (typeof ff.scene_prompt === 'string') {
