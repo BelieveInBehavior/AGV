@@ -8,20 +8,63 @@ import { v4 as uuidv4 } from 'uuid';
 import { getDB } from '../utils/db.js';
 import { authMiddleware } from '../utils/jwt.js';
 import { generateLibraryReferenceImage } from '../utils/reference-image-fal.js';
-import { uploadImageDataUrlToOss } from '../utils/oss.js';
+import { isOssConfigured, uploadImageDataUrlToOss } from '../utils/oss.js';
 
 const router = Router();
 
 const USER_AI_COL = 'user_ai_settings';
 
-async function getUserFalImageConfig(db, userId) {
+async function getUserImageConfig(db, userId) {
   const doc = await db.collection(USER_AI_COL).findOne({ userId });
-  const envKey = (process.env.FAL_API_KEY || '').trim();
-  const key = (doc?.imageApiKey || envKey || '').trim();
-  const model = (doc?.imageModel || process.env.FAL_IMAGE_MODEL || 'fal-ai/flux/schnell').trim();
-  const provider = doc?.imageProvider ?? (envKey ? 'fal' : 'none');
-  const useFal = provider === 'fal' && Boolean(key);
-  return { falKey: key, modelId: model, useFal };
+  const envOpenAiKey = (process.env.IMAGE_API_KEY || '').trim();
+  const envFalKey = (process.env.FAL_API_KEY || '').trim();
+  const provider = doc?.imageProvider ?? (envOpenAiKey ? 'openai' : envFalKey ? 'fal' : 'none');
+  const apiKey = (doc?.imageApiKey || (provider === 'openai' ? envOpenAiKey : envFalKey) || '').trim();
+  const modelId = (
+    doc?.imageModel
+    || (provider === 'openai' ? process.env.IMAGE_MODEL : process.env.FAL_IMAGE_MODEL)
+    || (provider === 'openai' ? 'gpt-image-1' : 'fal-ai/flux/schnell')
+  ).trim();
+  const baseUrl = (
+    doc?.imageBaseUrl
+    || process.env.IMAGE_BASE_URL
+    || process.env.LLM_BASE_URL
+    || 'https://api.openai.com/v1'
+  ).trim();
+  return {
+    provider,
+    apiKey,
+    modelId,
+    baseUrl,
+    enabled: provider !== 'none' && Boolean(apiKey),
+  };
+}
+
+function sanitizeStoryboardPlanV2(plan) {
+  const src = plan && typeof plan === 'object' ? plan : {};
+  const normalizeFrame = (frame) => {
+    const fr = frame && typeof frame === 'object' ? frame : {};
+    return {
+      description: typeof fr.description === 'string' ? fr.description : '',
+      scene_prompt: typeof fr.scene_prompt === 'string' ? fr.scene_prompt : '',
+      characters: Array.isArray(fr.characters) ? fr.characters : [],
+      characterImageUrls:
+        fr.characterImageUrls && typeof fr.characterImageUrls === 'object' ? fr.characterImageUrls : {},
+      imageUrl: fr.imageUrl ?? null,
+      imagePromptUsed: typeof fr.imagePromptUsed === 'string' ? fr.imagePromptUsed : undefined,
+      imageError: typeof fr.imageError === 'string' ? fr.imageError : undefined,
+      status: typeof fr.status === 'string' ? fr.status : undefined,
+    };
+  };
+
+  return {
+    video_prompt: typeof src.video_prompt === 'string' ? src.video_prompt : '',
+    transition_from_prev: typeof src.transition_from_prev === 'string' ? src.transition_from_prev : '',
+    included_character_ids: Array.isArray(src.included_character_ids) ? src.included_character_ids : [],
+    first_frame: normalizeFrame(src.first_frame),
+    last_frame: normalizeFrame(src.last_frame),
+    referenceStale: Boolean(src.referenceStale),
+  };
 }
 
 async function markEpisodeReferenceStale(db, projectId, episodeId) {
@@ -283,9 +326,9 @@ router.post('/:projectId/references/generate', async (req, res) => {
       return res.status(400).json({ success: false, message: 'name 必填' });
     }
 
-    const { useFal, falKey, modelId } = await getUserFalImageConfig(db, req.userId);
-    if (!useFal) {
-      return res.status(400).json({ success: false, message: '未配置 FAL 生图，请在 AI 设置中填写 image API Key' });
+    const { provider, apiKey, modelId, baseUrl, enabled } = await getUserImageConfig(db, req.userId);
+    if (!enabled) {
+      return res.status(400).json({ success: false, message: '未配置可用的生图 Provider，请在 AI 设置中填写图片模型配置' });
     }
 
     let description = '';
@@ -303,7 +346,9 @@ router.post('/:projectId/references/generate', async (req, res) => {
     }
 
     const imageUrl = await generateLibraryReferenceImage({
-      falKey,
+      provider,
+      baseUrl,
+      apiKey,
       modelId,
       artStyle: project.artStyle || 'cinematic',
       videoRatio: project.videoRatio || '16:9',
@@ -314,18 +359,26 @@ router.post('/:projectId/references/generate', async (req, res) => {
     });
 
     if (!imageUrl) {
-      return res.status(502).json({ success: false, message: 'FAL 未返回图片 URL' });
+      return res.status(502).json({ success: false, message: '图片 Provider 未返回图片结果' });
     }
+    const persistedImageUrl =
+      imageUrl.startsWith('data:image/') && isOssConfigured()
+        ? (await uploadImageDataUrlToOss({
+          dataUrl: imageUrl,
+          fileName: `${kind}-${entityName}.jpg`,
+          subDir: `projects/${projectId}/references`,
+        })).url
+        : imageUrl;
 
     let nextChars = [...(project.characters || [])];
     let nextLocs = [...(project.locations || [])];
 
     if (kind === 'character') {
       const idx = nextChars.findIndex((c) => (c.name || '').trim() === entityName);
-      if (idx >= 0) nextChars[idx] = { ...nextChars[idx], referenceImageUrl: imageUrl };
+      if (idx >= 0) nextChars[idx] = { ...nextChars[idx], referenceImageUrl: persistedImageUrl };
     } else {
       const idx = nextLocs.findIndex((l) => (l.name || '').trim() === entityName);
-      if (idx >= 0) nextLocs[idx] = { ...nextLocs[idx], referenceImageUrl: imageUrl };
+      if (idx >= 0) nextLocs[idx] = { ...nextLocs[idx], referenceImageUrl: persistedImageUrl };
     }
 
     const updated = await db.collection('projects').findOneAndUpdate(
@@ -339,7 +392,7 @@ router.post('/:projectId/references/generate', async (req, res) => {
       await markEpisodeReferenceStale(db, projectId, episodeId);
     }
 
-    res.json({ success: true, project: doc, imageUrl });
+    res.json({ success: true, project: doc, imageUrl: persistedImageUrl });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -403,31 +456,19 @@ router.patch('/:projectId/episodes/:episodeId/clips/:clipId', async (req, res) =
           message: 'beatPrompts 需提供 video_prompt 或 first_frame / last_frame 的 scene_prompt、description 或 characters',
         });
       }
-      if (typeof video_prompt === 'string') {
-        $set['storyboardPlan.video_prompt'] = video_prompt;
-      }
+      const nextPlan = sanitizeStoryboardPlanV2(clip.storyboardPlan);
+      if (typeof video_prompt === 'string') nextPlan.video_prompt = video_prompt;
       if (v2Ff) {
-        if (typeof ff.scene_prompt === 'string') {
-          $set['storyboardPlan.first_frame.scene_prompt'] = ff.scene_prompt;
-        }
-        if (typeof ff.description === 'string') {
-          $set['storyboardPlan.first_frame.description'] = ff.description;
-        }
-        if (Array.isArray(ff.characters)) {
-          $set['storyboardPlan.first_frame.characters'] = ff.characters;
-        }
+        if (typeof ff.scene_prompt === 'string') nextPlan.first_frame.scene_prompt = ff.scene_prompt;
+        if (typeof ff.description === 'string') nextPlan.first_frame.description = ff.description;
+        if (Array.isArray(ff.characters)) nextPlan.first_frame.characters = ff.characters;
       }
       if (v2Lf) {
-        if (typeof lf.scene_prompt === 'string') {
-          $set['storyboardPlan.last_frame.scene_prompt'] = lf.scene_prompt;
-        }
-        if (typeof lf.description === 'string') {
-          $set['storyboardPlan.last_frame.description'] = lf.description;
-        }
-        if (Array.isArray(lf.characters)) {
-          $set['storyboardPlan.last_frame.characters'] = lf.characters;
-        }
+        if (typeof lf.scene_prompt === 'string') nextPlan.last_frame.scene_prompt = lf.scene_prompt;
+        if (typeof lf.description === 'string') nextPlan.last_frame.description = lf.description;
+        if (Array.isArray(lf.characters)) nextPlan.last_frame.characters = lf.characters;
       }
+      $set.storyboardPlan = nextPlan;
     }
 
     await db.collection('clips').updateOne({ clipId, projectId, episodeId }, { $set });
@@ -572,7 +613,7 @@ router.get('/:projectId/episodes/:episodeId/clips', async (req, res) => {
     const db = getDB();
     const clips = await db
       .collection('clips')
-      .find({ episodeId: req.params.episodeId, projectId: req.params.projectId })
+      .find({ episodeId: req.params.episodeId, projectId: req.params.projectId, isActive: { $ne: false } })
       .sort({ clipIndex: 1 })
       .toArray();
 
@@ -581,7 +622,7 @@ router.get('/:projectId/episodes/:episodeId/clips', async (req, res) => {
       clips.map(async (clip) => {
         const panels = await db
           .collection('panels')
-          .find({ clipId: clip.clipId })
+          .find({ clipId: clip.clipId, isActive: { $ne: false } })
           .sort({ panelIndex: 1 })
           .toArray();
         return { ...clip, panels };

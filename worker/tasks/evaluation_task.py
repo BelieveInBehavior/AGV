@@ -42,7 +42,7 @@ def evaluate_episode_outputs(
         if not project:
             raise ValueError(f'Project {project_id} not found')
 
-        clips = list(db.clips.find({'episodeId': episode_id}).sort('clipIndex', 1))
+        clips = list(db.clips.find({'episodeId': episode_id, 'isActive': {'$ne': False}}).sort('clipIndex', 1))
         if not clips:
             raise ValueError('没有可评估的情节片段，请先完成故事分析')
 

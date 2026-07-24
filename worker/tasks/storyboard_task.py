@@ -26,6 +26,38 @@ def _use_multi_panel(clip: dict, storyboard_mode: str) -> bool:
     return clip.get('sceneComplexity') == 'complex'
 
 
+def _panel_core_fields(panel: dict, clip: dict, panel_index: int) -> dict:
+    return {
+        'panelIndex': panel.get('panelIndex', panel_index),
+        'description': panel.get('description', ''),
+        'characters': panel.get('characters', []),
+        'location': panel.get('location', clip.get('location', '')),
+        'shotType': panel.get('shotType', 'medium shot'),
+        'cameraMovement': panel.get('cameraMovement', 'static'),
+        'mood': panel.get('mood', clip.get('mood', '')),
+        'action': panel.get('action', ''),
+        'dialogue': panel.get('dialogue', ''),
+        'imagePrompt': panel.get('imagePrompt', panel.get('description', '')),
+        'videoPrompt': panel.get('videoPrompt', ''),
+    }
+
+
+def _panel_changed(existing: dict, payload: dict) -> bool:
+    keys = (
+        'description',
+        'characters',
+        'location',
+        'shotType',
+        'cameraMovement',
+        'mood',
+        'action',
+        'dialogue',
+        'imagePrompt',
+        'videoPrompt',
+    )
+    return any(existing.get(key) != payload.get(key) for key in keys)
+
+
 @app.task(
     name='tasks.storyboard_task.generate_storyboard',
     bind=True,
@@ -60,7 +92,7 @@ def generate_storyboard(
 
         ai_settings = get_ai_settings_for_project(db, project_id)
 
-        query = {'episodeId': episode_id}
+        query = {'episodeId': episode_id, 'isActive': {'$ne': False}}
         if clip_ids:
             query['clipId'] = {'$in': clip_ids}
         clips = list(db.clips.find(query).sort('clipIndex', 1))
@@ -90,46 +122,84 @@ def generate_storyboard(
                     language=language,
                     ai_settings=ai_settings,
                 )
+                if not panels:
+                    continue
 
-                db.panels.delete_many({'clipId': clip['clipId']})
-
-                panel_docs = []
+                existing_panels = list(db.panels.find({'clipId': clip['clipId'], 'isActive': {'$ne': False}}))
+                existing_by_index = {int(p.get('panelIndex', 0)): p for p in existing_panels}
+                active_panel_ids: list[str] = []
+                seen_indexes: set[int] = set()
                 for j, panel in enumerate(panels):
+                    panel_index = panel.get('panelIndex', j)
+                    try:
+                        panel_index = int(panel_index)
+                    except (TypeError, ValueError):
+                        panel_index = j
+                    seen_indexes.add(panel_index)
+                    core = _panel_core_fields(panel, clip, panel_index)
+                    existing = existing_by_index.get(panel_index)
+                    if existing:
+                        next_doc = {
+                            **core,
+                            'updatedAt': now,
+                            'isActive': True,
+                        }
+                        if _panel_changed(existing, core):
+                            next_doc.update({
+                                'imageUrl': None,
+                                'videoUrl': None,
+                                'status': 'draft',
+                            })
+                        db.panels.update_one(
+                            {'panelId': existing['panelId']},
+                            {
+                                '$set': next_doc,
+                                '$unset': {'supersededAt': ''},
+                            },
+                        )
+                        active_panel_ids.append(existing['panelId'])
+                        continue
+
                     panel_id = f"panel_{uuid4().hex[:12]}"
-                    panel_docs.append({
+                    db.panels.insert_one({
                         'panelId': panel_id,
                         'clipId': clip['clipId'],
                         'episodeId': episode_id,
                         'projectId': project_id,
-                        'panelIndex': panel.get('panelIndex', j),
-                        'description': panel.get('description', ''),
-                        'characters': panel.get('characters', []),
-                        'location': panel.get('location', clip.get('location', '')),
-                        'shotType': panel.get('shotType', 'medium shot'),
-                        'cameraMovement': panel.get('cameraMovement', 'static'),
-                        'mood': panel.get('mood', clip.get('mood', '')),
-                        'action': panel.get('action', ''),
-                        'dialogue': panel.get('dialogue', ''),
-                        'imagePrompt': panel.get('imagePrompt', panel.get('description', '')),
-                        'videoPrompt': panel.get('videoPrompt', ''),
+                        **core,
                         'imageUrl': None,
                         'videoUrl': None,
                         'status': 'draft',
+                        'isActive': True,
                         'createdAt': now,
                         'updatedAt': now,
                     })
+                    active_panel_ids.append(panel_id)
 
-                if panel_docs:
-                    db.panels.insert_many(panel_docs)
+                stale_panel_ids = [
+                    panel['panelId']
+                    for panel in existing_panels
+                    if int(panel.get('panelIndex', -1)) not in seen_indexes
+                ]
+                if stale_panel_ids:
+                    db.panels.update_many(
+                        {'panelId': {'$in': stale_panel_ids}},
+                        {'$set': {'isActive': False, 'supersededAt': now, 'updatedAt': now}},
+                    )
+
+                if active_panel_ids:
+                    clip_update = {
+                        'panelIds': active_panel_ids,
+                        'storyboardPlan': None,
+                        'updatedAt': now,
+                    }
+                    if clip.get('storyboardPlan') is not None:
+                        clip_update['archivedStoryboardPlan'] = clip.get('storyboardPlan')
                     db.clips.update_one(
                         {'clipId': clip['clipId']},
-                        {'$set': {
-                            'panelIds': [p['panelId'] for p in panel_docs],
-                            'storyboardPlan': None,
-                            'updatedAt': now,
-                        }},
+                        {'$set': clip_update},
                     )
-                    total_panels += len(panel_docs)
+                    total_panels += len(active_panel_ids)
                 else:
                     db.clips.update_one(
                         {'clipId': clip['clipId']},

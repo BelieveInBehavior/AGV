@@ -68,7 +68,8 @@ def get_or_create_character_state_image(
     art_style: str,
 ) -> str | None:
     """
-    无基础形象 URL 时返回 None（caller 应用纯文本提示补偿）。
+    不再额外生成角色状态图：直接复用项目角色基础参考图 URL。
+    衣着/情绪信息通过文本提示（由 build_image_prompt / multi_ref_image_gen prompt 承担）补充。
     """
     base = (base_image_url or '').strip()
     if not base:
@@ -76,6 +77,7 @@ def get_or_create_character_state_image(
 
     state_id = _state_hash(character_id, outfit, emotion, base)
 
+    # 仅做缓存命中计数，不重复生成
     hit = get_cached_state_url(redis_cli, state_id)
     if hit:
         db.characterStates.update_one(
@@ -94,25 +96,7 @@ def get_or_create_character_state_image(
         )
         return url
 
-    from skills.multi_ref_image_gen import multi_ref_image_gen
-
-    en_hint = (
-        f'Keep the same person identity as the reference. Current wardrobe: {outfit}. '
-        f'Expression and acting: {emotion}. Clear readable face, neutral fill light.'
-    )
-    url = multi_ref_image_gen(
-        provider_cfg=provider_cfg,
-        scene_prompt=en_hint,
-        reference_urls=[base],
-        width=min(width, 1024),
-        height=min(height, 1024),
-        art_style=art_style,
-        prompt_suffix='',
-        single_ref_extra_hint='',
-    )
-    if not url:
-        return None
-
+    # 直接用原始参考图作为状态图 URL
     now = datetime.now(timezone.utc)
     db.characterStates.update_one(
         {'_id': state_id},
@@ -124,13 +108,13 @@ def get_or_create_character_state_image(
                 'outfit': outfit,
                 'emotion': emotion,
                 'baseImageUrl': base,
-                'stateImageUrl': url,
+                'stateImageUrl': base,
                 'lastUsedAt': now,
             },
-            '$setOnInsert': {'createdAt': now, 'usageCount': 0},
+            '$setOnInsert': {'createdAt': now},
             '$inc': {'usageCount': 1},
         },
         upsert=True,
     )
-    set_cached_state_url(redis_cli, state_id, url, config.CHARACTER_STATE_CACHE_TTL_SECONDS)
-    return url
+    set_cached_state_url(redis_cli, state_id, base, config.CHARACTER_STATE_CACHE_TTL_SECONDS)
+    return base

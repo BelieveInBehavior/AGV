@@ -118,7 +118,7 @@ export interface Panel {
   status: 'draft' | 'generating_image' | 'image_ready' | 'generating_video' | 'complete';
 }
 
-/** 首尾帧中单帧：中文 scene_prompt + characters；imagePrompt 仅作读兼容/回退 */
+/** 首尾帧中单帧：静态生图 scene_prompt + characters；imagePrompt 仅作读兼容/回退 */
 export interface BeatCharacterPose {
   name: string;
   outfit: string;
@@ -127,7 +127,7 @@ export interface BeatCharacterPose {
 
 export interface BeatFrameSlot {
   description: string;
-  /** v3：结构化中文 prompt（景别/机位/运镜/内容/时长/情绪/角色说话） */
+  /** v3：静态首/末帧生图 prompt */
   scene_prompt?: string;
   /** 旧版合一 prompt */
   imagePrompt?: string;
@@ -148,14 +148,6 @@ export interface StoryboardPlan {
   /** 扁平首末帧（v2 主流程） */
   first_frame?: BeatFrameSlot;
   last_frame?: BeatFrameSlot;
-  /** 旧版多方案（仅读兼容；生图 Worker 需扁平结构） */
-  candidates?: {
-    id: string;
-    variant_label?: string;
-    first_frame?: BeatFrameSlot;
-    last_frame?: BeatFrameSlot;
-  }[];
-  selected_candidate_id?: string;
   /** 参考图变更后由 API 置 true，重新生成首尾帧 Prompt 后清除 */
   referenceStale?: boolean;
 }

@@ -1,16 +1,102 @@
 """
-多参考图生图 Skill：目前仅支持 OpenAI/OpenRouter 兼容接口。
+多参考图生图 Skill：按 provider 分派；不支持多参考时退化为首张参考的 i2i。
 
-beat 首尾帧 / 角色状态图 / 分镜 均可复用。
+beat 首尾帧 / 角色状态图 / 分镜 均可复用；当前 FAL 分支完整实现，gemini/doubao 预留为单参考降级。
 """
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import config
 
 from skills.build_image_prompt import ART_STYLE_KEYWORDS
+
+
+def _fal_subscribe(model_id: str, arguments: dict, fal_key: str):
+    import fal_client
+
+    prev = os.environ.get('FAL_KEY')
+    os.environ['FAL_KEY'] = fal_key
+    try:
+        return fal_client.subscribe(model_id, arguments=arguments)
+    finally:
+        if prev is None:
+            os.environ.pop('FAL_KEY', None)
+        else:
+            os.environ['FAL_KEY'] = prev
+
+
+def _fal_generate(
+    *,
+    positive: str,
+    negative: str,
+    width: int,
+    height: int,
+    model_id: str,
+    fal_key: str,
+    reference_urls: list[str],
+    use_first_reference_only: bool,
+) -> str | None:
+    """reference_urls 顺序：场景 / 角色状态 / …；仅首张参与 i2i 时与旧逻辑一致。"""
+    ref = [u for u in reference_urls if isinstance(u, str) and u.strip()]
+    i2i_model = (config.FAL_IMAGE_I2I_MODEL or '').strip() or 'fal-ai/flux/dev/image-to-image'
+
+    if ref and use_first_reference_only:
+        prompt = (
+            f'{positive}, maintain subjects, wardrobe, and environment '
+            f'consistent with the reference image'
+        )
+        arguments: dict = {
+            'prompt': prompt,
+            'image_url': ref[0],
+            'strength': 0.62,
+            'image_size': {'width': width, 'height': height},
+            'num_inference_steps': 28,
+            'guidance_scale': 3.5,
+        }
+        try:
+            result = _fal_subscribe(i2i_model, arguments, fal_key)
+        except Exception:
+            result = _fal_subscribe(
+                model_id,
+                arguments={
+                    'prompt': positive,
+                    'negative_prompt': negative,
+                    'image_size': {'width': width, 'height': height},
+                    'num_inference_steps': 4,
+                    'num_images': 1,
+                },
+                fal_key=fal_key,
+            )
+    elif ref:
+        # 多参考：当前仅首张接入 FAL i2i；其余信息应已融入 positive
+        return _fal_generate(
+            positive=positive,
+            negative=negative,
+            width=width,
+            height=height,
+            model_id=model_id,
+            fal_key=fal_key,
+            reference_urls=ref,
+            use_first_reference_only=True,
+        )
+    else:
+        result = _fal_subscribe(
+            model_id,
+            arguments={
+                'prompt': positive,
+                'negative_prompt': negative,
+                'image_size': {'width': width, 'height': height},
+                'num_inference_steps': 4,
+                'num_images': 1,
+            },
+            fal_key=fal_key,
+        )
+
+    images = result.get('images', [])
+    return images[0]['url'] if images else None
 
 
 def _pick_openai_image_size(width: int, height: int) -> str:
@@ -32,25 +118,12 @@ def _openai_post_json(
     import httpx
 
     root = (base_url or config.IMAGE_BASE_URL or config.LLM_BASE_URL or 'https://api.openai.com/v1').strip().rstrip('/')
-    timeout_seconds = max(5.0, float(getattr(config, 'IMAGE_REQUEST_TIMEOUT_SECONDS', 60) or 60))
     headers = {
         'Authorization': f'Bearer {api_key}',
         'Content-Type': 'application/json',
     }
-    url = f'{root}{path}'
-    print(f'[DEBUG] POST {url}')
-    print(f'[DEBUG] payload: {payload}')
-    timeout = httpx.Timeout(connect=min(timeout_seconds, 15.0), read=timeout_seconds, write=30.0, pool=15.0)
-    try:
-        with httpx.Client(timeout=timeout) as client:
-            resp = client.post(url, headers=headers, json=payload)
-    except httpx.TimeoutException as exc:
-        raise RuntimeError(
-            f'OpenAI 图片接口调用超时: provider={root}, timeout={int(timeout_seconds)}s'
-        ) from exc
-    except httpx.HTTPError as exc:
-        raise RuntimeError(f'OpenAI 图片接口网络错误: provider={root}, detail={exc!s}') from exc
-    print(f'[DEBUG] response status: {resp.status_code}')
+    with httpx.Client(timeout=180.0) as client:
+        resp = client.post(f'{root}{path}', headers=headers, json=payload)
     if resp.status_code >= 400:
         try:
             body = resp.json()
@@ -62,7 +135,6 @@ def _openai_post_json(
             or resp.text
             or f'HTTP {resp.status_code}'
         )
-        print(f'[DEBUG] error response: {resp.text}')
         raise RuntimeError(f'OpenAI 图片接口调用失败: {message}')
     return resp.json()
 
@@ -94,58 +166,31 @@ def _openai_generate(
     base_url: str,
     reference_urls: list[str],
 ) -> str | None:
-    """生成图片，支持参考图。OpenRouter 和官方 OpenAI 参数格式不同。"""
     ref = [u for u in reference_urls if isinstance(u, str) and u.strip()]
     output_format = 'jpeg'
     prompt = positive.strip()
     if negative.strip():
         prompt = f'{prompt}\n\nAvoid: {negative.strip()}'
 
-    is_openrouter = 'openrouter' in base_url.lower()
-
     payload: dict[str, Any] = {
         'model': model_id,
         'prompt': prompt,
-        'n': 1,
+        'size': _pick_openai_image_size(width, height),
+        'quality': 'medium',
+        'output_format': output_format,
+        'output_compression': 90,
     }
-
-    # OpenRouter 和官方 OpenAI 的尺寸参数不同
-    if is_openrouter:
-        payload['size'] = _pick_openai_image_size(width, height)
-    else:
-        payload['size'] = _pick_openai_image_size(width, height)
-        payload['quality'] = 'medium'
-        payload['output_format'] = output_format
-        payload['output_compression'] = 90
-
-    # 参考图处理
+    # 兼容 OpenRouter / OpenAI：统一走 /images/generations，
+    # 将参考图作为文本提示补充（/images/edits 不被通用 OpenAI 兼容服务支持）
     if ref:
-        if is_openrouter:
-            # OpenRouter: 参考图用 input_references 数组，需要 type 字段
-            # 仅保留 HTTP(S) URL，过滤掉 data: URL（OpenRouter 可能不支持）
-            http_refs = [u for u in ref if u.startswith('http://') or u.startswith('https://')]
-            if http_refs:
-                payload['input_references'] = [
-                    {'type': 'image_url', 'image_url': {'url': u}}
-                    for u in http_refs
-                ]
-            # 如果只有 data: URL，融入 prompt
-            if not http_refs and ref:
-                prompt = f'{prompt}\n\nUse provided reference image styles for consistency.'
-                payload['prompt'] = prompt
-        else:
-            # 官方 OpenAI：暂不支持 image_url，只能融入 prompt
-            # （真正的图片输入需要用 vision API 或其他模型）
-            if len(ref) > 0:
-                ref_hint = 'Reference image for consistency: ' + ', '.join(ref[:3])
-                prompt = f'{prompt}\n\n{ref_hint}'
-                payload['prompt'] = prompt
+        ref_hint = 'Reference images for consistency: ' + ', '.join(ref)
+        prompt = f'{prompt}\n\n{ref_hint}'
+        payload['prompt'] = prompt
 
-    path = '/images/generations' if not is_openrouter else '/images/generations'
     result = _openai_post_json(
         base_url=base_url,
         api_key=api_key,
-        path=path,
+        path='/images/generations',
         payload=payload,
     )
     return _extract_openai_image_result(result, output_format)
@@ -160,24 +205,9 @@ def generate_image_with_provider(
     height: int,
     reference_urls: list[str] | None = None,
 ) -> str | None:
-    prov = (provider_cfg.get('provider') or 'none').lower()
-    base_url = str(
-        provider_cfg.get('baseUrl')
-        or config.IMAGE_BASE_URL
-        or config.LLM_BASE_URL
-        or 'https://api.openai.com/v1'
-    ).strip().rstrip('/')
-    model_id = (provider_cfg.get('model') or config.IMAGE_MODEL or 'gpt-image-1').strip()
-    force_multi_openai = prov == 'openai' and (
-        'openrouter.ai' in base_url.lower()
-        or model_id.startswith('openai/')
-        or model_id.startswith('gpt-image')
-    )
-    supports_multi = bool(provider_cfg.get('supportsMultiReference')) or force_multi_openai
-    max_reference_images = max(
-        1,
-        int(provider_cfg.get('maxReferenceImages') or (16 if force_multi_openai else 1)),
-    )
+    prov = (provider_cfg.get('provider') or 'fal').lower()
+    supports_multi = bool(provider_cfg.get('supportsMultiReference'))
+    max_reference_images = max(1, int(provider_cfg.get('maxReferenceImages') or 1))
     refs = [u for u in (reference_urls or []) if isinstance(u, str) and u.strip()]
     if refs:
         refs = refs[: max_reference_images if supports_multi else 1]
@@ -192,6 +222,13 @@ def generate_image_with_provider(
         api_key = (provider_cfg.get('apiKey') or config.IMAGE_API_KEY or '').strip()
         if not api_key:
             raise ValueError('未配置 OpenAI 图片 API Key')
+        model_id = (provider_cfg.get('model') or config.IMAGE_MODEL or 'gpt-image-1').strip()
+        base_url = (
+            provider_cfg.get('baseUrl')
+            or config.IMAGE_BASE_URL
+            or config.LLM_BASE_URL
+            or 'https://api.openai.com/v1'
+        )
         return _openai_generate(
             positive=positive,
             negative=negative,
@@ -201,6 +238,20 @@ def generate_image_with_provider(
             api_key=api_key,
             base_url=str(base_url).strip().rstrip('/'),
             reference_urls=refs,
+        )
+
+    fal_key = (provider_cfg.get('apiKey') or config.FAL_API_KEY or '').strip()
+    model_id = (provider_cfg.get('model') or '').strip() or config.FAL_IMAGE_MODEL
+    if prov == 'fal' and fal_key:
+        return _fal_generate(
+            positive=positive,
+            negative=negative,
+            width=width,
+            height=height,
+            model_id=model_id,
+            fal_key=fal_key,
+            reference_urls=refs,
+            use_first_reference_only=not supports_multi,
         )
 
     import urllib.parse

@@ -12,7 +12,8 @@ export default function SettingsPage() {
   const [llmBaseUrl, setLlmBaseUrl] = useState('');
   const [llmModel, setLlmModel] = useState('');
   const [llmApiKey, setLlmApiKey] = useState('');
-  const [imageProvider, setImageProvider] = useState<'fal' | 'none' | 'gemini' | 'doubao'>('none');
+  const [imageProvider, setImageProvider] = useState<'openai' | 'fal' | 'none' | 'gemini' | 'doubao'>('none');
+  const [imageBaseUrl, setImageBaseUrl] = useState('');
   const [imageModel, setImageModel] = useState('');
   const [imageApiKey, setImageApiKey] = useState('');
   const [imageSupportsMultiReference, setImageSupportsMultiReference] = useState(false);
@@ -28,6 +29,7 @@ export default function SettingsPage() {
         setLlmBaseUrl(s.llmBaseUrl);
         setLlmModel(s.llmModel);
         setImageProvider(s.imageProvider);
+        setImageBaseUrl(s.imageBaseUrl);
         setImageModel(s.imageModel);
         setImageSupportsMultiReference(s.imageSupportsMultiReference);
         setImageMaxReferenceImages(s.imageMaxReferenceImages);
@@ -46,6 +48,7 @@ export default function SettingsPage() {
         llmBaseUrl,
         llmModel,
         imageProvider,
+        imageBaseUrl,
         imageModel,
         imageSupportsMultiReference,
         imageMaxReferenceImages,
@@ -58,6 +61,15 @@ export default function SettingsPage() {
 
       const next = await saveAiSettings(payload);
       setSettings(next);
+      setLlmBaseUrl(next.llmBaseUrl);
+      setLlmModel(next.llmModel);
+      setImageProvider(next.imageProvider);
+      setImageBaseUrl(next.imageBaseUrl);
+      setImageModel(next.imageModel);
+      setImageSupportsMultiReference(next.imageSupportsMultiReference);
+      setImageMaxReferenceImages(next.imageMaxReferenceImages);
+      setVideoBaseUrl(next.videoBaseUrl);
+      setVideoModel(next.videoModel);
       setLlmApiKey('');
       setImageApiKey('');
       setVideoApiKey('');
@@ -111,14 +123,15 @@ export default function SettingsPage() {
 
           <section className="settings-section">
             <h2>生图 Provider</h2>
-            <p className="hint">FAL 为默认实现；Gemini / Doubao 预留多参考接入（当前仍可能回退为 FAL 单张参考）。</p>
+            <p className="hint">支持 FAL 和 OpenAI 兼容图片接口。`openai` 模式可直接填写 Base URL、API Key、模型名，例如 `gpt-image-1`。</p>
             <label className="field">
               <span>模式</span>
               <select
                 value={imageProvider}
-                onChange={(e) => setImageProvider(e.target.value as 'fal' | 'none' | 'gemini' | 'doubao')}
+                onChange={(e) => setImageProvider(e.target.value as 'openai' | 'fal' | 'none' | 'gemini' | 'doubao')}
                 style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #36406a', background: '#0f1428', color: '#eef2ff' }}
               >
+                <option value="openai">API Provider（OpenAI 兼容）</option>
                 <option value="fal">FAL</option>
                 <option value="none">占位图（无 Key）</option>
                 <option value="gemini">Gemini（骨架）</option>
@@ -126,8 +139,16 @@ export default function SettingsPage() {
               </select>
             </label>
             <label className="field">
+              <span>Image Base URL</span>
+              <input
+                value={imageBaseUrl}
+                onChange={(e) => setImageBaseUrl(e.target.value)}
+                placeholder="https://api.openai.com/v1"
+              />
+            </label>
+            <label className="field">
               <span>图像模型 ID</span>
-              <input value={imageModel} onChange={(e) => setImageModel(e.target.value)} placeholder="fal-ai/flux/schnell" />
+              <input value={imageModel} onChange={(e) => setImageModel(e.target.value)} placeholder={imageProvider === 'openai' ? 'gpt-image-1' : 'fal-ai/flux/schnell'} />
             </label>
             <label className="field checkbox-field">
               <span>支持多参考图</span>

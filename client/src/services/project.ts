@@ -185,7 +185,7 @@ export async function generateStory(projectId: string, episodeId: string): Promi
   return data.taskId;
 }
 
-/** 情节分析之后：仅 LLM 生成首尾帧 storyboardPlan（含 scene_prompt） */
+/** 情节分析之后：仅 LLM 生成首尾帧 storyboardPlan（含静态生图 scene_prompt 与结构化 video_prompt） */
 export async function generateBeatPrompts(
   projectId: string,
   episodeId: string,
@@ -223,6 +223,19 @@ export async function generateImages(
   const data = await request<{ taskId: string }>(`${API_BASE}/generate/images`, {
     method: 'POST',
     body: JSON.stringify({ projectId, episodeId, panelIds }),
+  });
+  return data.taskId;
+}
+
+export async function generateBeatFrameImage(
+  projectId: string,
+  episodeId: string,
+  clipId: string,
+  beatSlot: 'first_frame' | 'last_frame',
+): Promise<string> {
+  const data = await request<{ taskId: string }>(`${API_BASE}/generate/images`, {
+    method: 'POST',
+    body: JSON.stringify({ projectId, episodeId, clipId, beatSlot }),
   });
   return data.taskId;
 }

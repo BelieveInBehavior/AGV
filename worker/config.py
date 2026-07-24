@@ -18,16 +18,16 @@ LLM_BASE_URL = os.getenv('LLM_BASE_URL', 'https://api.openai.com/v1')
 LLM_API_KEY = os.getenv('LLM_API_KEY', '')
 LLM_MODEL = os.getenv('LLM_MODEL', 'gpt-4o-mini')
 
+IMAGE_BASE_URL = os.getenv('IMAGE_BASE_URL', LLM_BASE_URL or 'https://api.openai.com/v1')
+IMAGE_API_KEY = os.getenv('IMAGE_API_KEY', '')
+IMAGE_MODEL = os.getenv('IMAGE_MODEL', 'gpt-image-1')
+IMAGE_REQUEST_TIMEOUT_SECONDS = float(os.getenv('IMAGE_REQUEST_TIMEOUT_SECONDS', '60'))
+
 # 视频生成（预留：设置页可配置，任务接入第三方时再读）
 VIDEO_API_BASE_URL = os.getenv('VIDEO_API_BASE_URL', '')
 VIDEO_API_KEY = os.getenv('VIDEO_API_KEY', '')
 VIDEO_API_PATH = os.getenv('VIDEO_API_PATH', 'v1/videos').strip().strip('/')
 VIDEO_MODEL = os.getenv('VIDEO_MODEL', '')
-
-FAL_API_KEY = os.getenv('FAL_API_KEY', '')
-FAL_IMAGE_MODEL = os.getenv('FAL_IMAGE_MODEL', 'fal-ai/flux/schnell')
-# When reference images exist, beat/panel generation uses image-to-image for the first reference URL.
-FAL_IMAGE_I2I_MODEL = os.getenv('FAL_IMAGE_I2I_MODEL', 'fal-ai/flux/dev/image-to-image')
 
 # Celery
 CELERY_BROKER_URL = REDIS_URL

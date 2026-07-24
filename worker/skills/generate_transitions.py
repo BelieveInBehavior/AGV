@@ -86,7 +86,7 @@ def run_transition_batch_for_episode(
     from datetime import datetime, timezone
 
     now = datetime.now(timezone.utc)
-    clips = list(db.clips.find({'episodeId': episode_id}).sort('clipIndex', 1))
+    clips = list(db.clips.find({'episodeId': episode_id, 'isActive': {'$ne': False}}).sort('clipIndex', 1))
     payload: list[dict[str, str]] = []
     for c in clips:
         plan = c.get('storyboardPlan') or {}

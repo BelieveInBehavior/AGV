@@ -3,7 +3,7 @@ Celery Task: 批量生成角色/场景参考图
 
 故事分析完成后自动触发：
   - 遍历 project.characters / locations
-  - 有 imagePrompt 但没有 referenceImageUrl 的 → 调用 FAL txt2img 生成参考图
+  - 有 imagePrompt 但没有 referenceImageUrl 的 → 调用 OpenAI/OpenRouter 文生图生成参考图
   - 写回 MongoDB project.characters[].referenceImageUrl
 
 冷热分离:
@@ -11,43 +11,30 @@ Celery Task: 批量生成角色/场景参考图
   冷 (MongoDB): project.characters / locations
 """
 
-import os
 import urllib.parse
 from datetime import datetime, timezone
 
 from celery_app import app
 from skills.build_image_prompt import CHARACTER_REFERENCE_RATIO, get_resolution
+from skills.multi_ref_image_gen import multi_ref_image_gen
 from utils.ai_settings import get_ai_settings_for_project
 from utils.db import get_db
 from utils.redis_client import publish_progress, publish_complete, publish_error, set_task_state
-import config
 
 
-def _txt2img_fal(prompt: str, width: int, height: int, fal_key: str, model_id: str) -> str | None:
+def _txt2img_openai(prompt: str, width: int, height: int, ai_settings: dict) -> str | None:
     """纯文生图，用于角色/场景参考图首次生成。"""
-    import fal_client
-
-    prev = os.environ.get('FAL_KEY')
-    os.environ['FAL_KEY'] = fal_key
-    try:
-        result = fal_client.subscribe(
-            model_id,
-            arguments={
-                'prompt': prompt,
-                'negative_prompt': 'blurry, low quality, deformed, watermark, multiple characters, crowd',
-                'image_size': {'width': width, 'height': height},
-                'num_inference_steps': 4,
-                'num_images': 1,
-            },
-        )
-    finally:
-        if prev is None:
-            os.environ.pop('FAL_KEY', None)
-        else:
-            os.environ['FAL_KEY'] = prev
-
-    images = result.get('images', [])
-    return images[0]['url'] if images else None
+    provider_cfg = ai_settings['image']
+    return multi_ref_image_gen(
+        provider_cfg=provider_cfg,
+        scene_prompt=prompt,
+        reference_urls=[],
+        width=width,
+        height=height,
+        art_style='cinematic',
+        prompt_suffix='',
+        single_ref_extra_hint='',
+    )
 
 
 @app.task(
@@ -74,17 +61,9 @@ def generate_reference_images(self, task_id: str, project_id: str, **kwargs):
 
         ai_settings = get_ai_settings_for_project(db, project_id)
         img_cfg = ai_settings['image']
-        fal_key = (img_cfg.get('apiKey') or config.FAL_API_KEY or '').strip()
-        model_id = (
-            (project.get('imageModel') or '').strip()
-            or (img_cfg.get('model') or '').strip()
-            or config.FAL_IMAGE_MODEL
-            or 'fal-ai/flux/schnell'
-        )
-        use_fal = img_cfg.get('provider') == 'fal' and bool(fal_key)
 
-        if not use_fal:
-            publish_complete(task_id, {'skipped': True, 'reason': 'FAL not configured'})
+        if img_cfg.get('provider') == 'none':
+            publish_complete(task_id, {'skipped': True, 'reason': 'image provider not configured'})
             return {'skipped': True}
 
         art_style = project.get('artStyle', 'cinematic')
@@ -124,7 +103,7 @@ def generate_reference_images(self, task_id: str, project_id: str, **kwargs):
         for c in char_jobs:
             prompt = f'{style_bit} {char_prefix} {c["imagePrompt"]}'
             try:
-                url = _txt2img_fal(prompt, char_w, char_h, fal_key, model_id)
+                url = _txt2img_openai(prompt, char_w, char_h, ai_settings)
                 if url:
                     for uc in updated_chars:
                         if uc.get('name') == c['name']:
@@ -141,7 +120,7 @@ def generate_reference_images(self, task_id: str, project_id: str, **kwargs):
         for l in loc_jobs:
             prompt = f'{style_bit} Wide environment concept art, establishing shot, no people, empty scene. {l["imagePrompt"]}'
             try:
-                url = _txt2img_fal(prompt, loc_w, loc_h, fal_key, model_id)
+                url = _txt2img_openai(prompt, loc_w, loc_h, ai_settings)
                 if url:
                     for ul in updated_locs:
                         if ul.get('name') == l['name']:

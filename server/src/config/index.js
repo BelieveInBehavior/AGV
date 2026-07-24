@@ -43,6 +43,7 @@ const config = {
     bucket: process.env.OSS_BUCKET || '',
     endpoint: process.env.OSS_ENDPOINT || '',
     folder: process.env.OSS_FOLDER || 'AGV',
+    signExpiresSeconds: Number(process.env.OSS_SIGN_EXPIRES_SECONDS || 315360000),
   },
   redis: {
     url: process.env.REDIS_URL || 'redis://localhost:6379/0',

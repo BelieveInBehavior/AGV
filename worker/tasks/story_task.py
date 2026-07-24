@@ -20,6 +20,10 @@ from utils.redis_client import publish_progress, publish_complete, publish_error
 from utils import pipeline_telemetry
 
 
+def _active_match(base: dict) -> dict:
+    return {**base, 'isActive': {'$ne': False}}
+
+
 @app.task(
     name='tasks.story_task.analyze_story',
     bind=True,
@@ -67,6 +71,8 @@ def analyze_story(self, task_id: str, episode_id: str, project_id: str, **kwargs
         characters = result.get('characters', [])
         locations = result.get('locations', [])
         clips = result.get('clips', [])
+        if not clips:
+            raise ValueError('故事分析未生成任何情节，已保留现有资产')
 
         publish_progress(
             task_id, 65,
@@ -100,12 +106,22 @@ def analyze_story(self, task_id: str, episode_id: str, project_id: str, **kwargs
             }},
         )
 
-        # 删除旧 clips，插入新的
-        db.clips.delete_many({'episodeId': episode_id})
+        existing_active = list(db.clips.find(_active_match({'episodeId': episode_id})))
+        existing_by_index = {
+            int(c.get('clipIndex', i)): c
+            for i, c in enumerate(sorted(existing_active, key=lambda row: row.get('clipIndex', 0)))
+        }
 
-        clip_docs = []
+        active_clip_ids: list[str] = []
+        seen_indexes: set[int] = set()
         for i, clip in enumerate(clips):
-            clip_id = f"clip_{uuid4().hex[:12]}"
+            clip_index = clip.get('clipIndex', i)
+            try:
+                clip_index = int(clip_index)
+            except (TypeError, ValueError):
+                clip_index = i
+            seen_indexes.add(clip_index)
+
             complexity = clip.get('sceneComplexity', 'simple')
             if complexity not in ('simple', 'complex'):
                 complexity = 'simple'
@@ -116,11 +132,10 @@ def analyze_story(self, task_id: str, episode_id: str, project_id: str, **kwargs
             except (TypeError, ValueError):
                 duration = 10
 
-            clip_docs.append({
-                'clipId': clip_id,
+            clip_payload = {
                 'episodeId': episode_id,
                 'projectId': project_id,
-                'clipIndex': clip.get('clipIndex', i),
+                'clipIndex': clip_index,
                 'content': clip.get('content', ''),
                 'summary': clip.get('summary', ''),
                 'characters': clip.get('characters', []),
@@ -128,24 +143,54 @@ def analyze_story(self, task_id: str, episode_id: str, project_id: str, **kwargs
                 'mood': clip.get('mood', ''),
                 'sceneComplexity': complexity,
                 'duration': duration,
-                'storyboardPlan': None,
-                'panelIds': [],
-                'createdAt': now,
                 'updatedAt': now,
-            })
+                'isActive': True,
+            }
 
-        if clip_docs:
-            db.clips.insert_many(clip_docs)
+            existing = existing_by_index.get(clip_index)
+            if existing:
+                db.clips.update_one(
+                    {'clipId': existing['clipId']},
+                    {
+                        '$set': clip_payload,
+                        '$unset': {'supersededAt': ''},
+                    },
+                )
+                active_clip_ids.append(existing['clipId'])
+            else:
+                clip_id = f"clip_{uuid4().hex[:12]}"
+                db.clips.insert_one({
+                    'clipId': clip_id,
+                    **clip_payload,
+                    'storyboardPlan': None,
+                    'panelIds': [],
+                    'createdAt': now,
+                })
+                active_clip_ids.append(clip_id)
 
-        clip_ids = [c['clipId'] for c in clip_docs]
+        stale_clip_ids = [
+            clip['clipId']
+            for clip in existing_active
+            if int(clip.get('clipIndex', -1)) not in seen_indexes
+        ]
+        if stale_clip_ids:
+            db.clips.update_many(
+                {'clipId': {'$in': stale_clip_ids}},
+                {'$set': {'isActive': False, 'supersededAt': now, 'updatedAt': now}},
+            )
+            db.panels.update_many(
+                {'clipId': {'$in': stale_clip_ids}, 'isActive': {'$ne': False}},
+                {'$set': {'isActive': False, 'supersededAt': now, 'updatedAt': now}},
+            )
+
         db.episodes.update_one(
             {'episodeId': episode_id},
-            {'$set': {'status': 'analyzed', 'clipIds': clip_ids, 'updatedAt': now}},
+            {'$set': {'status': 'analyzed', 'clipIds': active_clip_ids, 'updatedAt': now}},
         )
 
         # ── 完成 ─────────────────────────────────────────────────────
         result_data = {
-            'clipCount': len(clip_docs),
+            'clipCount': len(active_clip_ids),
             'characterCount': len(existing_chars),
             'locationCount': len(existing_locs),
         }

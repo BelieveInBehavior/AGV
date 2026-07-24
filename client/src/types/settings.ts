@@ -2,7 +2,8 @@ export interface AiSettings {
   llmBaseUrl: string;
   llmModel: string;
   llmApiKeySet: boolean;
-  imageProvider: 'fal' | 'none' | 'gemini' | 'doubao';
+  imageProvider: 'openai' | 'fal' | 'none' | 'gemini' | 'doubao';
+  imageBaseUrl: string;
   imageModel: string;
   imageApiKeySet: boolean;
   imageSupportsMultiReference: boolean;

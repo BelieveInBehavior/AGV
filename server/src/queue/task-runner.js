@@ -116,6 +116,8 @@ export async function enqueueTask({ type, projectId, episodeId, payload = {} }) 
           episodeId: episodeId || null,
           panelIds: payload.panelIds || [],
           panelId: payload.panelId || null,
+          clipId: payload.clipId || null,
+          beatSlot: payload.beatSlot || null,
         });
         break;
 

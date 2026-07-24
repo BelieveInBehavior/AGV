@@ -26,7 +26,6 @@ import {
 } from './EpisodeEvaluationPanel';
 import {
   hasBeatStoryboardContent,
-  isLegacyBeatPlan,
   resolveBeatFrames,
   storyboardPlanForDisplay,
 } from './beatPlanHelpers';
@@ -500,7 +499,6 @@ export default function ProjectPage() {
 
   const allPanels = clips.flatMap((c) => c.panels || []);
   const hasBeatStoryboard = clips.some((c) => hasBeatStoryboardContent(c.storyboardPlan ?? undefined));
-  const hasLegacyBeatPlan = clips.some((c) => isLegacyBeatPlan(c.storyboardPlan ?? undefined));
   const galleryItems = buildGalleryItems(clips);
   const hasStoryboardVisualPlan = allPanels.length > 0 || hasBeatStoryboard;
   const clipsEvalScope: EvaluationScope = 'story_analysis';
@@ -810,12 +808,6 @@ export default function ProjectPage() {
               <p className="empty-hint">请先在情节页点击「生成首尾帧 Prompt」或使用高级经典分镜</p>
             ) : (
               <div className="storyboard-grid prompts-stage-layout">
-                {hasLegacyBeatPlan ? (
-                  <p className="beat-ref-stale">
-                    检测到旧版分镜数据（多方案 candidates）。页面已按选中方案展示 Prompt；生成图片前建议在情节页重新点击「生成首尾帧
-                    Prompt」以写入 v2 扁平结构。
-                  </p>
-                ) : null}
                 {project && (project.characters.length > 0 || project.locations.length > 0) ? (
                   <VisualAssetLibrary
                     project={project}
@@ -852,6 +844,7 @@ export default function ProjectPage() {
                           plan={storyboardPlanForDisplay(plan)}
                           disabled={runningTasks.length > 0}
                           onClipUpdated={mergeClipIntoState}
+                          onTaskCreated={(taskId, type) => addTask(taskId, type, activeEpisode.episodeId)}
                           onError={(msg) => setError(msg)}
                         />
                       </div>

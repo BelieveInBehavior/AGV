@@ -12,6 +12,26 @@ from utils.db import get_db
 from utils.redis_client import publish_progress, publish_complete, publish_error, set_task_state
 
 
+def _merge_frame_generation_fields(next_frame: dict | None, prev_frame: dict | None) -> dict | None:
+    if not isinstance(next_frame, dict):
+        return next_frame
+    merged = dict(next_frame)
+    prev = prev_frame if isinstance(prev_frame, dict) else {}
+    same_scene = bool(prev) and (merged.get('scene_prompt') or '').strip() == (prev.get('scene_prompt') or '').strip()
+    if same_scene:
+        for key in ('imageUrl', 'imagePromptUsed', 'characterImageUrls', 'referenceImageUrlsUsed'):
+            if prev.get(key) is not None:
+                merged[key] = prev.get(key)
+        if prev.get('status') is not None:
+            merged['status'] = prev.get('status')
+        if prev.get('imageError') is not None:
+            merged['imageError'] = prev.get('imageError')
+    else:
+        for key in ('imageUrl', 'imagePromptUsed', 'characterImageUrls', 'referenceImageUrlsUsed', 'imageError', 'status'):
+            merged.pop(key, None)
+    return merged
+
+
 def apply_beat_frame_plan_for_clip(
     db,
     now,
@@ -25,7 +45,7 @@ def apply_beat_frame_plan_for_clip(
     language: str,
     ai_settings: dict,
 ) -> None:
-    """单条 clip 写入 storyboardPlan，清空 panels 与旧视频。"""
+    """单条 clip 增量写入 storyboardPlan，并将旧 panels 归档为 inactive。"""
     plan = generate_beat_frames_skill(
         clip=clip,
         characters=characters,
@@ -36,7 +56,13 @@ def apply_beat_frame_plan_for_clip(
     )
     if isinstance(plan, dict):
         plan['referenceStale'] = False
-    db.panels.delete_many({'clipId': clip['clipId']})
+        prev_plan = clip.get('storyboardPlan') if isinstance(clip.get('storyboardPlan'), dict) else {}
+        plan['first_frame'] = _merge_frame_generation_fields(plan.get('first_frame'), prev_plan.get('first_frame'))
+        plan['last_frame'] = _merge_frame_generation_fields(plan.get('last_frame'), prev_plan.get('last_frame'))
+    db.panels.update_many(
+        {'clipId': clip['clipId'], 'isActive': {'$ne': False}},
+        {'$set': {'isActive': False, 'supersededAt': now, 'updatedAt': now}},
+    )
     db.clips.update_one(
         {'clipId': clip['clipId']},
         {'$set': {
@@ -77,7 +103,7 @@ def generate_beat_prompts(
 
         ai_settings = get_ai_settings_for_project(db, project_id)
 
-        query = {'episodeId': episode_id}
+        query = {'episodeId': episode_id, 'isActive': {'$ne': False}}
         if clip_ids:
             query['clipId'] = {'$in': clip_ids}
         clips = list(db.clips.find(query).sort('clipIndex', 1))

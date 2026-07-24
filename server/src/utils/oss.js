@@ -88,8 +88,8 @@ export function signMediaUrl(rawUrl) {
     const parsed = new URL(rawUrl);
     const objectKey = decodePathname(parsed.pathname);
     if (!objectKey) return rawUrl;
-    const expires = Number(getOssConfig().signExpiresSeconds || 3600);
-    return client.signatureUrl(objectKey, { expires });
+    const expires = Number(getOssConfig().signExpiresSeconds || 315360000);
+    return client.signatureUrl(objectKey, { expires, method: 'GET' });
   } catch (err) {
     console.warn('[oss] 签名失败，回退原链接:', err?.message || err);
     return rawUrl;

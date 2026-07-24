@@ -10,17 +10,22 @@ import config
 
 def _default_image_caps(provider: str) -> tuple[bool, int]:
     p = (provider or '').lower()
+    if p == 'openai':
+        return True, 16
     if p == 'gemini':
         return True, 6
     if p == 'doubao':
         return True, 4
-    # fal / none / 其他
+    # none / 其他
     return False, 1
 
 
 def get_default_ai_settings() -> dict[str, Any]:
     """进程级默认（.env / worker/config）"""
-    img_provider = 'fal' if (config.FAL_API_KEY or '') else 'none'
+    if (config.IMAGE_API_KEY or '').strip():
+        img_provider = 'openai'
+    else:
+        img_provider = 'none'
     sup, mx = _default_image_caps(img_provider)
     return {
         'llm': {
@@ -30,8 +35,16 @@ def get_default_ai_settings() -> dict[str, Any]:
         },
         'image': {
             'provider': img_provider,
-            'apiKey': config.FAL_API_KEY or '',
-            'model': config.FAL_IMAGE_MODEL or 'fal-ai/flux/schnell',
+            'baseUrl': (
+                (config.IMAGE_BASE_URL if img_provider == 'openai' else '')
+                or 'https://api.openai.com/v1'
+            ).strip().rstrip('/'),
+            'apiKey': (
+                config.IMAGE_API_KEY if img_provider == 'openai' else ''
+            ) or '',
+            'model': (
+                config.IMAGE_MODEL if img_provider == 'openai' else 'none'
+            ) or ('gpt-image-1' if img_provider == 'openai' else 'none'),
             'supportsMultiReference': sup,
             'maxReferenceImages': mx,
         },
@@ -60,14 +73,16 @@ def _merge_image(doc: dict | None, base: dict) -> dict:
     out = copy.deepcopy(base['image'])
     if not doc:
         return out
-    if doc.get('imageProvider') in ('fal', 'none', 'gemini', 'doubao'):
+    if doc.get('imageProvider') in ('openai', 'none'):
         out['provider'] = doc['imageProvider']
+    if doc.get('imageBaseUrl'):
+        out['baseUrl'] = str(doc['imageBaseUrl']).strip().rstrip('/')
     if doc.get('imageApiKey'):
         out['apiKey'] = str(doc['imageApiKey']).strip()
     if doc.get('imageModel'):
         out['model'] = str(doc['imageModel']).strip()
 
-    sup, mx = _default_image_caps(out.get('provider') or 'fal')
+    sup, mx = _default_image_caps(out.get('provider') or 'openai')
     if doc.get('imageSupportsMultiReference') is not None:
         v = doc['imageSupportsMultiReference']
         out['supportsMultiReference'] = bool(v) if not isinstance(v, str) else v.lower() in ('1', 'true', 'yes')
@@ -97,13 +112,20 @@ def _merge_video(doc: dict | None, base: dict) -> dict:
 
 
 def merge_user_doc(doc: dict | None) -> dict[str, Any]:
-    """合并 Mongo 文档与环境默认"""
+    """合并 Mongo 文档与环境变量默认值
+
+    优先级：用户配置 > 环境变量 > 硬编码默认值
+    """
     base = get_default_ai_settings()
     if not doc:
         return base
+
+    # 用户配置的 provider 优先于环境推断
+    merged_image = _merge_image(doc, base)
+
     return {
         'llm': _merge_llm(doc, base),
-        'image': _merge_image(doc, base),
+        'image': merged_image,
         'video': _merge_video(doc, base),
     }
 

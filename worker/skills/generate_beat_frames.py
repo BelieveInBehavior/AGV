@@ -149,6 +149,31 @@ def _normalize_plan(raw: dict) -> dict:
     }
 
 
+def _is_legacy_plan(raw: dict) -> bool:
+    return any(k in raw for k in ('dramatic_beat', 'motion_prompt', 'continuity_notes', 'candidates'))
+
+
+def _validate_plan(plan: dict, raw: dict) -> dict:
+    if _is_legacy_plan(raw):
+        raise ValueError('LLM returned legacy beat storyboard schema; expected v2 flat storyboardPlan')
+
+    ff = plan.get('first_frame') or {}
+    lf = plan.get('last_frame') or {}
+    has_ff = bool(ff.get('scene_prompt') or ff.get('description') or ff.get('characters'))
+    has_lf = bool(lf.get('scene_prompt') or lf.get('description') or lf.get('characters'))
+    has_video = bool((plan.get('video_prompt') or '').strip())
+
+    if not has_video and not has_ff and not has_lf:
+        raise ValueError('LLM returned empty beat storyboardPlan')
+    if not has_video:
+        raise ValueError('LLM beat storyboardPlan missing video_prompt')
+    if not has_ff or not has_lf:
+        raise ValueError('LLM beat storyboardPlan missing first_frame or last_frame')
+    if not ff.get('scene_prompt') or not lf.get('scene_prompt'):
+        raise ValueError('LLM beat storyboardPlan missing first_frame.scene_prompt or last_frame.scene_prompt')
+    return plan
+
+
 def _target_duration_sec(clip: dict) -> int:
     try:
         value = int(clip.get('duration') or 10)
@@ -233,4 +258,4 @@ def generate_beat_frames_skill(
     if not isinstance(parsed, dict):
         parsed = {}
     plan = _normalize_plan(parsed)
-    return plan
+    return _validate_plan(plan, parsed)

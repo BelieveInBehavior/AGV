@@ -117,9 +117,18 @@ router.post('/storyboard', async (req, res) => {
 router.post('/images', async (req, res) => {
   try {
     const db = getDB();
-    const { projectId, episodeId, panelIds, panelId } = req.body;
+    const { projectId, episodeId, panelIds, panelId, clipId, beatSlot } = req.body;
     if (!projectId) {
       return res.status(400).json({ success: false, message: 'projectId 必填' });
+    }
+    if (beatSlot && beatSlot !== 'first_frame' && beatSlot !== 'last_frame') {
+      return res.status(400).json({ success: false, message: 'beatSlot 仅支持 first_frame 或 last_frame' });
+    }
+    if (beatSlot && !clipId) {
+      return res.status(400).json({ success: false, message: '定向首尾帧生成时 clipId 必填' });
+    }
+    if (clipId && !beatSlot) {
+      return res.status(400).json({ success: false, message: '定向首尾帧生成时 beatSlot 必填' });
     }
 
     const project = await db.collection('projects').findOne({ projectId, userId: req.userId });
@@ -129,7 +138,12 @@ router.post('/images', async (req, res) => {
       type: 'IMAGE_GENERATION',
       projectId,
       episodeId: episodeId || null,
-      payload: { panelIds: panelIds || [], panelId: panelId || null },
+      payload: {
+        panelIds: panelIds || [],
+        panelId: panelId || null,
+        clipId: clipId || null,
+        beatSlot: beatSlot || null,
+      },
     });
 
     res.json({ success: true, taskId });

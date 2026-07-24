@@ -130,7 +130,7 @@ def generate_videos(
         model = (vcfg.get('model') or config.VIDEO_MODEL or '').strip()
         path = (config.VIDEO_API_PATH or 'v1/videos').strip().strip('/')
 
-        query = {'episodeId': episode_id}
+        query = {'episodeId': episode_id, 'isActive': {'$ne': False}}
         if clip_ids:
             query['clipId'] = {'$in': clip_ids}
         clips = list(db.clips.find(query).sort('clipIndex', 1))

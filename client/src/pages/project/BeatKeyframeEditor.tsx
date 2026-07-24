@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { CHARACTER_REFERENCE_RATIO } from '../../config/visual-assets';
 import type { BeatCharacterPose, Clip, Project, StoryboardPlan } from '../../types/project';
-import { patchClip, uploadProjectImage } from '../../services/project';
+import { generateBeatFrameImage, patchClip, uploadProjectImage } from '../../services/project';
 import {
   collectClipReferenceUrls,
   effectiveCharacterRefUrl,
@@ -25,6 +25,7 @@ type Props = {
   plan: StoryboardPlan;
   disabled: boolean;
   onClipUpdated: (c: Clip) => void;
+  onTaskCreated: (taskId: string, type: 'IMAGE_GENERATION') => void;
   onError: (msg: string) => void;
 };
 
@@ -36,6 +37,7 @@ export function BeatKeyframeEditor({
   plan,
   disabled,
   onClipUpdated,
+  onTaskCreated,
   onError,
 }: Props) {
   const { first_frame: ff, last_frame: lf } = resolveBeatFrames(plan);
@@ -48,6 +50,7 @@ export function BeatKeyframeEditor({
   const [openFirst, setOpenFirst] = useState(false);
   const [openLast, setOpenLast] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [generatingSlot, setGeneratingSlot] = useState<'first_frame' | 'last_frame' | null>(null);
   const locFileRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -59,29 +62,58 @@ export function BeatKeyframeEditor({
     setLastChars(cloneChars(l?.characters));
   }, [clip.clipId, plan]);
 
+  useEffect(() => {
+    if (!disabled) setGeneratingSlot(null);
+  }, [disabled]);
+
   const urls = collectClipReferenceUrls(project, clip);
+
+  const persistPrompts = async () => {
+    const updated = await patchClip(projectId, episodeId, clip.clipId, {
+      beatPrompts: {
+        video_prompt: videoPrompt,
+        first_frame: {
+          scene_prompt: firstScene,
+          description: ff?.description || '',
+          characters: firstChars,
+        },
+        last_frame: {
+          scene_prompt: lastScene,
+          description: lf?.description || '',
+          characters: lastChars,
+        },
+      },
+    });
+    onClipUpdated(updated);
+    return updated;
+  };
 
   const savePrompts = async () => {
     setSaving(true);
     try {
-      const updated = await patchClip(projectId, episodeId, clip.clipId, {
-        beatPrompts: {
-          video_prompt: videoPrompt,
-          first_frame: {
-            scene_prompt: firstScene,
-            description: ff?.description || '',
-            characters: firstChars,
-          },
-          last_frame: {
-            scene_prompt: lastScene,
-            description: lf?.description || '',
-            characters: lastChars,
-          },
-        },
-      });
-      onClipUpdated(updated);
+      await persistPrompts();
     } catch (e) {
       onError(e instanceof Error ? e.message : '保存失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleGenerateFrameImage = async (slot: 'first_frame' | 'last_frame') => {
+    const scenePrompt = slot === 'first_frame' ? firstScene : lastScene;
+    if (!scenePrompt.trim()) {
+      onError(slot === 'first_frame' ? '首帧 Prompt 为空，无法生成图片' : '末帧 Prompt 为空，无法生成图片');
+      return;
+    }
+    setSaving(true);
+    setGeneratingSlot(slot);
+    try {
+      await persistPrompts();
+      const taskId = await generateBeatFrameImage(projectId, episodeId, clip.clipId, slot);
+      onTaskCreated(taskId, 'IMAGE_GENERATION');
+    } catch (e) {
+      setGeneratingSlot(null);
+      onError(e instanceof Error ? e.message : '生成失败');
     } finally {
       setSaving(false);
     }
@@ -376,6 +408,14 @@ export function BeatKeyframeEditor({
           <div className="panel-info">
             <p className="panel-desc">{ff?.description}</p>
           </div>
+          <button
+            type="button"
+            className="btn-gen-img"
+            disabled={disabled || saving}
+            onClick={() => void handleGenerateFrameImage('first_frame')}
+          >
+            {generatingSlot === 'first_frame' && saving ? '生成中…' : '生成首帧图片'}
+          </button>
         </div>
         <div className="panel-card beat-frame-card">
           {lf?.imageUrl ? (
@@ -388,6 +428,14 @@ export function BeatKeyframeEditor({
           <div className="panel-info">
             <p className="panel-desc">{lf?.description}</p>
           </div>
+          <button
+            type="button"
+            className="btn-gen-img"
+            disabled={disabled || saving}
+            onClick={() => void handleGenerateFrameImage('last_frame')}
+          >
+            {generatingSlot === 'last_frame' && saving ? '生成中…' : '生成末帧图片'}
+          </button>
         </div>
       </div>
     </div>

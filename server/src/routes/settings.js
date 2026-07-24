@@ -12,13 +12,21 @@ router.use(authMiddleware);
 const COL = 'user_ai_settings';
 
 function envDefaults() {
+  // 设置页默认值：provider 不由环境变量推断，避免覆盖用户显式选择
+  const imageProvider = 'none';
+  const imageSupportsMultiReference = true;
+  const imageMaxReferenceImages = 10;
   return {
     llmBaseUrl: process.env.LLM_BASE_URL || 'https://api.openai.com/v1',
     llmModel: process.env.LLM_MODEL || 'gpt-4o-mini',
-    imageProvider: process.env.FAL_API_KEY ? 'fal' : 'none',
-    imageModel: process.env.FAL_IMAGE_MODEL || 'fal-ai/flux/schnell',
-    imageSupportsMultiReference: false,
-    imageMaxReferenceImages: 1,
+    imageProvider,
+    imageBaseUrl: process.env.IMAGE_BASE_URL || process.env.LLM_BASE_URL || 'https://api.openai.com/v1',
+    imageModel:
+      imageProvider === 'openai'
+        ? process.env.IMAGE_MODEL || 'gpt-image-1'
+        : 'none',
+    imageSupportsMultiReference,
+    imageMaxReferenceImages,
     videoBaseUrl: process.env.VIDEO_API_BASE_URL || '',
     videoModel: process.env.VIDEO_MODEL || '',
   };
@@ -30,7 +38,8 @@ function mergeForResponse(doc) {
     llmBaseUrl: doc?.llmBaseUrl || env.llmBaseUrl,
     llmModel: doc?.llmModel || env.llmModel,
     llmApiKeySet: Boolean(doc?.llmApiKey),
-    imageProvider: doc?.imageProvider ?? env.imageProvider,
+    imageProvider: doc?.imageProvider || env.imageProvider,
+    imageBaseUrl: doc?.imageBaseUrl || env.imageBaseUrl,
     imageModel: doc?.imageModel || env.imageModel,
     imageSupportsMultiReference:
       typeof doc?.imageSupportsMultiReference === 'boolean'
@@ -78,9 +87,13 @@ router.put('/ai', async (req, res) => {
           ? body.llmModel.trim()
           : prev.llmModel ?? env.llmModel,
       llmApiKey: prev.llmApiKey,
-      imageProvider: ['fal', 'none', 'gemini', 'doubao'].includes(body.imageProvider)
+      imageProvider: ['openai', 'none'].includes(body.imageProvider)
         ? body.imageProvider
-        : prev.imageProvider ?? env.imageProvider,
+        : prev.imageProvider ?? 'none',
+      imageBaseUrl:
+        typeof body.imageBaseUrl === 'string'
+          ? body.imageBaseUrl.trim()
+          : prev.imageBaseUrl ?? env.imageBaseUrl,
       imageModel:
         typeof body.imageModel === 'string'
           ? body.imageModel.trim()

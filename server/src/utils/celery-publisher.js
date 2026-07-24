@@ -124,7 +124,7 @@ export const CeleryTasks = {
     });
   },
 
-  async generateImages({ taskId, projectId, episodeId, panelIds = [], panelId = null }) {
+  async generateImages({ taskId, projectId, episodeId, panelIds = [], panelId = null, clipId = null, beatSlot = null }) {
     return publishCeleryTask({
       taskName: 'tasks.image_task.generate_images',
       kwargs: {
@@ -133,6 +133,8 @@ export const CeleryTasks = {
         episode_id: episodeId || null,
         panel_ids: panelIds,
         panel_id: panelId,
+        clip_id: clipId,
+        beat_slot: beatSlot,
       },
       queue: 'image',
       taskId,
