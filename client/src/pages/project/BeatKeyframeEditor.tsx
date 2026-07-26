@@ -40,9 +40,10 @@ type Props = {
   plan: StoryboardPlan;
   disabled: boolean;
   onClipUpdated: (c: Clip) => void;
-  onTaskCreated: (taskId: string, type: 'IMAGE_GENERATION') => void;
+  onTaskCreated: (taskId: string, type: 'IMAGE_GENERATION' | 'VIDEO_GENERATION') => void;
   onGenerateVideo: (clipId: string) => Promise<void> | void;
   onError: (msg: string) => void;
+  videoGenerationTask?: { taskId: string; progress: number; message: string; status: string } | null;
 };
 
 export function BeatKeyframeEditor({
@@ -56,6 +57,7 @@ export function BeatKeyframeEditor({
   onTaskCreated,
   onGenerateVideo,
   onError,
+  videoGenerationTask,
 }: Props) {
   const { first_frame: ff, last_frame: lf } = resolveBeatFrames(plan);
   const videoFirstFrameRef = resolveVideoFirstFrameRef(ff);
@@ -120,6 +122,16 @@ export function BeatKeyframeEditor({
     return updated;
   };
 
+  const firstDirty = firstScene !== (ff?.scene_prompt || '') || firstChars.some((c, i) => {
+    const orig = (ff?.characters || [])[i];
+    return c.outfit !== (orig?.outfit || '') || c.emotion !== (orig?.emotion || '') || c.name !== (orig?.name || '');
+  });
+  const videoRefDirty =
+    videoRefUrlsText !== joinLines(clip.videoReferenceAssets?.videoUrls) ||
+    audioRefUrlsText !== joinLines(clip.videoReferenceAssets?.audioUrls);
+  const videoPromptDirty = videoPrompt !== (plan.video_prompt || '');
+  const promptDirty = firstDirty || videoRefDirty || videoPromptDirty;
+
   const savePrompts = async () => {
     setSaving(true);
     try {
@@ -153,6 +165,7 @@ export function BeatKeyframeEditor({
     try {
       await persistEdits({ includeVideoReferenceAssets: true });
       await onGenerateVideo(clip.clipId);
+      // Note: onGenerateVideo should call onTaskCreated internally
     } catch (e) {
       setGeneratingVideo(false);
       onError(e instanceof Error ? e.message : '生成失败');
@@ -395,12 +408,55 @@ export function BeatKeyframeEditor({
               </div>
             ))}
           </div>
+          <div className="beat-prompt-save-row" style={{ marginTop: '12px' }}>
+            <button
+              type="button"
+              className="btn-primary btn-small"
+              disabled={disabled || saving || !promptDirty}
+              onClick={() => void savePrompts()}
+            >
+              {saving ? '保存中…' : '保存 Prompt 修改'}
+            </button>
+          </div>
+          <div className="panel-card beat-frame-card beat-first-frame-card" style={{ marginTop: '12px' }}>
+            {videoFirstFrameRef ? (
+              <img src={videoFirstFrameRef} alt="" className="panel-img" />
+            ) : (
+              <div className="panel-placeholder">
+                <span className="shot-label">首帧</span>
+              </div>
+            )}
+            <div className="panel-info">
+              <p className="panel-desc">{ff?.description || '首帧图片用于给视频一个更稳定的起始视觉锚点。'}</p>
+            </div>
+            <button
+              type="button"
+              className="btn-gen-img"
+              disabled={disabled || saving}
+              onClick={() => void handleGenerateFirstFrame()}
+            >
+              {generatingFirstFrame && saving ? '生成中…' : ff?.imageUrl ? '重新生成首帧图片' : '生成首帧图片'}
+            </button>
+          </div>
+          {usingContinuityFrame && !ff?.imageUrl ? (
+            <p className="beat-first-note">当前使用上一情节尾部抽帧作为首帧参考。</p>
+          ) : null}
+          {displayFirst?.description ? <p className="beat-first-note">{displayFirst.description}</p> : null}
         </div>
         <div className="beat-prompt-slot beat-video-slot">
           <div className="beat-prompt-slot-head">
             <strong>视频预览</strong>
           </div>
-          {clip.videoUrl ? (
+          {videoGenerationTask?.status === 'running' ? (
+            <div className="beat-video-generating">
+              <div className="video-progress-spinner" />
+              <p className="beat-video-gen-message">{videoGenerationTask.message}</p>
+              <div className="video-progress-bar">
+                <div className="video-progress-fill" style={{ width: `${videoGenerationTask.progress}%` }} />
+              </div>
+              <span className="video-progress-pct">{videoGenerationTask.progress}%</span>
+            </div>
+          ) : clip.videoUrl ? (
             <video src={clip.videoUrl} controls className="clip-video beat-inline-video" playsInline />
           ) : (
             <div className="beat-video-placeholder">
@@ -455,44 +511,8 @@ export function BeatKeyframeEditor({
           {invalidAudioRefUrls.length > 0 ? (
             <p className="beat-video-note">参考音频 URL 非法：{invalidAudioRefUrls.join('、')}</p>
           ) : null}
-          {lf?.description ? <p className="beat-video-note">原末帧描述：{lf.description}</p> : null}
         </div>
       </div>
-
-      <div className="beat-prompt-save-row">
-        <button
-          type="button"
-          className="btn-primary btn-small"
-          disabled={disabled || saving}
-          onClick={() => void savePrompts()}
-        >
-          {saving ? '保存中…' : '保存 Prompt 修改'}
-        </button>
-      </div>
-      <div className="panel-card beat-frame-card beat-first-frame-card">
-        {videoFirstFrameRef ? (
-          <img src={videoFirstFrameRef} alt="" className="panel-img" />
-        ) : (
-          <div className="panel-placeholder">
-            <span className="shot-label">首帧</span>
-          </div>
-        )}
-        <div className="panel-info">
-          <p className="panel-desc">{ff?.description || '首帧图片用于给视频一个更稳定的起始视觉锚点。'}</p>
-        </div>
-        <button
-          type="button"
-          className="btn-gen-img"
-          disabled={disabled || saving}
-          onClick={() => void handleGenerateFirstFrame()}
-        >
-          {generatingFirstFrame && saving ? '生成中…' : ff?.imageUrl ? '重新生成首帧图片' : '生成首帧图片'}
-        </button>
-      </div>
-      {usingContinuityFrame && !ff?.imageUrl ? (
-        <p className="beat-first-note">当前展示的是上一情节视频尾部抽帧得到的连续首帧参考。</p>
-      ) : null}
-      {displayFirst?.description ? <p className="beat-first-note">首帧描述：{displayFirst.description}</p> : null}
     </div>
   );
 }

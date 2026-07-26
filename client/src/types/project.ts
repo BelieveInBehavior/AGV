@@ -96,6 +96,8 @@ export interface Episode {
     | 'edited'
     | 'complete';
   clipIds: string[];
+  /** 全集拼接后的完整视频 URL */
+  compiledVideoUrl?: string | null;
   evaluation?: EpisodeEvaluation | null;
   createdAt: string;
   updatedAt: string;

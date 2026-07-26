@@ -172,6 +172,7 @@ export default function ProjectPage() {
   const [editStrategy, setEditStrategy] = useState<'individual' | 'compile'>('compile');
   const [removeVocals, setRemoveVocals] = useState(false);
   const [editTransition, setEditTransition] = useState(0.5);
+  const [videoTaskIdsByClip, setVideoTaskIdsByClip] = useState<Record<string, string>>({});
   const [evaluationModal, setEvaluationModal] = useState<{ open: boolean; scope: EvaluationScope }>({
     open: false,
     scope: 'all',
@@ -463,6 +464,9 @@ export default function ProjectPage() {
     try {
       const taskId = await generateVideos(projectId, activeEpisode.episodeId, clipIds);
       addTask(taskId, 'VIDEO_GENERATION', activeEpisode.episodeId);
+      if (clipIds?.length === 1) {
+        setVideoTaskIdsByClip((prev) => ({ ...prev, [clipIds[0]]: taskId }));
+      }
       setStage('video');
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '生成失败');
@@ -586,7 +590,7 @@ export default function ProjectPage() {
                     clips: '情节分析',
                     prompts: '视频 Prompt',
                     video: '视频预览',
-                    editing: '视频剪辑',
+                    editing: '最终视频',
                   }[s]
                 }
               </span>
@@ -607,7 +611,7 @@ export default function ProjectPage() {
                   STORYBOARD_GEN: '经典分镜',
                   IMAGE_GENERATION: '图片生成',
                   VIDEO_GENERATION: '视频生成',
-                  VIDEO_EDITING: '视频剪辑',
+                  VIDEO_EDITING: '生成最终视频',
                   EPISODE_EVALUATION: '质量评估',
                 }[t.type]
               }
@@ -885,6 +889,18 @@ export default function ProjectPage() {
                           onTaskCreated={(taskId, type) => addTask(taskId, type, activeEpisode.episodeId)}
                           onGenerateVideo={(clipId) => handleGenerateVideos([clipId])}
                           onError={(msg) => setError(msg)}
+                          videoGenerationTask={(() => {
+                            const taskId = videoTaskIdsByClip[clip.clipId];
+                            if (!taskId) return null;
+                            const t = tasks[taskId];
+                            if (!t) return { taskId, progress: 0, message: '等待开始...', status: 'pending' };
+                            return {
+                              taskId,
+                              progress: t.progress ?? 0,
+                              message: t.message || '',
+                              status: t.status === 'pending' ? 'running' : t.status,
+                            };
+                          })()}
                         />
                       </div>
                     );
@@ -991,13 +1007,13 @@ export default function ProjectPage() {
         {stage === 'editing' && (
           <div className="stage-panel">
             <div className="stage-header">
-              <h2>视频剪辑与后处理</h2>
+              <h2>最终视频</h2>
               <div className="header-actions">
-                <button className="btn-ghost" onClick={() => goToStage('video')}>← 返回预览</button>
+                <button className="btn-ghost" onClick={() => goToStage('video')}>← 返回视频预览</button>
               </div>
             </div>
             <p className="stage-hint">
-              对已生成的视频进行后处理：支持单独编辑各情节或全集拼接。可选功能包括去人声、过渡特效等。
+              视频剪辑与后处理的结果即为最终成片。支持单独编辑各情节或全集拼接，可选去人声、过渡特效等。
             </p>
             <div className="edit-options-panel">
               <div className="edit-option-row">
@@ -1054,23 +1070,39 @@ export default function ProjectPage() {
             </div>
 
             <div className="edited-video-list">
-              <h3>已剪辑视频</h3>
-              {clips.some((c) => c.editedVideoUrl) ? (
-                clips.map((clip) =>
-                  clip.editedVideoUrl ? (
-                    <div key={clip.clipId} className="edited-video-card">
-                      <h4 className="video-clip-title">
-                        情节 {clip.clipIndex + 1} · {clip.summary.slice(0, 40)}
-                        {clip.duration && <span className="clip-duration">⏱ {clip.duration}s</span>}
-                      </h4>
-                      <video src={clip.editedVideoUrl} controls className="clip-video" playsInline />
-                    </div>
-                  ) : null,
-                )
+              {activeEpisode?.compiledVideoUrl ? (
+                <div className="compiled-video-card">
+                  <h3 className="compiled-video-title">
+                    📹 完整成片
+                  </h3>
+                  <p className="compiled-video-hint">全集拼接后的最终视频</p>
+                  <video src={activeEpisode.compiledVideoUrl} controls className="clip-video compiled-video" playsInline />
+                </div>
+              ) : clips.some((c) => c.editedVideoUrl || c.videoUrl) ? (
+                <div>
+                  <h3 className="individual-videos-title">
+                    {editStrategy === 'compile' ? '等待完整成片生成...' : '已剪辑情节'}
+                  </h3>
+                  {clips.map((clip) => {
+                    const isFinal = Boolean(clip.editedVideoUrl);
+                    const url = clip.editedVideoUrl || clip.videoUrl;
+                    if (!url) return null;
+                    return (
+                      <div key={clip.clipId} className="edited-video-card">
+                        <h4 className="video-clip-title">
+                          情节 {clip.clipIndex + 1} · {clip.summary.slice(0, 40)}
+                          {isFinal && <span className="final-video-badge">已剪辑</span>}
+                          {clip.duration && <span className="clip-duration">⏱ {clip.duration}s</span>}
+                        </h4>
+                        <video src={url} controls className="clip-video" playsInline />
+                      </div>
+                    );
+                  })}
+                </div>
               ) : (
                 <p className="empty-hint">
                   {hasEditReadyClips
-                    ? '暂无已剪辑视频。点击「开始剪辑」即可处理。'
+                    ? '暂无最终视频。点击「开始剪辑」即可生成。'
                     : '暂无可编辑视频。请先生成视频。'}
                 </p>
               )}

@@ -41,7 +41,15 @@ function PromptEditor({
   const [saving, setSaving] = useState(false);
   const dirty = draft !== value;
 
+  // 当外部 value 更新时同步 draft（比如 API 返回后）
+  const prevValueRef = useRef(value);
+  if (value !== prevValueRef.current) {
+    prevValueRef.current = value;
+    setDraft(value);
+  }
+
   const save = async () => {
+    if (!dirty) return;
     setSaving(true);
     try {
       const p = await patchProjectReferences(projectId, {
@@ -51,11 +59,16 @@ function PromptEditor({
           : { locations: [{ name, imagePrompt: draft }] }),
       });
       onProjectUpdated(p);
+      onError('');
     } catch (e) {
       onError(e instanceof Error ? e.message : '保存失败');
     } finally {
       setSaving(false);
     }
+  };
+
+  const cancel = () => {
+    setDraft(value);
   };
 
   return (
@@ -70,19 +83,29 @@ function PromptEditor({
             className="visual-asset-prompt-text"
             value={draft}
             placeholder="分析故事后自动生成，也可手动编辑"
-            disabled={disabled}
+            disabled={disabled || saving}
             onChange={(e) => setDraft(e.target.value)}
           />
-          {dirty && (
+          <div className="visual-asset-prompt-actions">
             <button
               type="button"
               className="visual-asset-prompt-save"
-              disabled={disabled || saving}
+              disabled={disabled || saving || !dirty}
               onClick={() => void save()}
             >
-              {saving ? '保存中…' : '保存'}
+              {saving ? '保存中…' : '保存 Prompt'}
             </button>
-          )}
+            {dirty && (
+              <button
+                type="button"
+                className="visual-asset-prompt-cancel"
+                disabled={saving}
+                onClick={cancel}
+              >
+                取消
+              </button>
+            )}
+          </div>
         </>
       )}
     </div>
@@ -99,6 +122,7 @@ export function VisualAssetLibrary({
   onError,
 }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileRef = useRef<Record<string, HTMLInputElement | null>>({});
 
   const handleAi = async (kind: 'character' | 'location', name: string) => {
@@ -186,7 +210,7 @@ export function VisualAssetLibrary({
         </p>
       </div>
       <div className="visual-asset-columns">
-        <div>
+        <section className="visual-asset-section">
           <div className="visual-asset-col-head">
             <h4 className="visual-asset-col-title">角色</h4>
             <span className="visual-asset-ratio-badge visual-asset-ratio-badge--required">
@@ -206,7 +230,12 @@ export function VisualAssetLibrary({
                 <div key={c.name} className={`visual-asset-card visual-asset-card--character ${ready ? 'is-ready' : ''}`}>
                   <div className="visual-asset-thumb-wrap visual-asset-thumb-wrap--character">
                     {refUrl ? (
-                      <img src={refUrl} alt="" className="visual-asset-thumb visual-asset-thumb--character" />
+                      <img
+                        src={refUrl}
+                        alt=""
+                        className="visual-asset-thumb visual-asset-thumb--character"
+                        onClick={() => setPreviewUrl(refUrl)}
+                      />
                     ) : (
                       <div className="visual-asset-thumb-empty visual-asset-thumb-empty--character">无图</div>
                     )}
@@ -278,8 +307,8 @@ export function VisualAssetLibrary({
               );
             })}
           </div>
-        </div>
-        <div>
+        </section>
+        <section className="visual-asset-section">
           <h4 className="visual-asset-col-title">场景</h4>
           <div className="visual-asset-grid">
             {project.locations.map((loc) => {
@@ -291,7 +320,12 @@ export function VisualAssetLibrary({
                 <div key={loc.name} className={`visual-asset-card ${ready ? 'is-ready' : ''}`}>
                   <div className="visual-asset-thumb-wrap">
                     {refUrl ? (
-                      <img src={refUrl} alt="" className="visual-asset-thumb" />
+                      <img
+                        src={refUrl}
+                        alt=""
+                        className="visual-asset-thumb"
+                        onClick={() => setPreviewUrl(refUrl)}
+                      />
                     ) : (
                       <div className="visual-asset-thumb-empty">无图</div>
                     )}
@@ -362,8 +396,21 @@ export function VisualAssetLibrary({
               );
             })}
           </div>
-        </div>
+        </section>
       </div>
+      {previewUrl && (
+        <div className="visual-asset-preview-overlay" onClick={() => setPreviewUrl(null)}>
+          <button
+            type="button"
+            className="visual-asset-preview-close"
+            onClick={() => setPreviewUrl(null)}
+            aria-label="关闭预览"
+          >
+            ×
+          </button>
+          <img src={previewUrl} alt="" className="visual-asset-preview-img" />
+        </div>
+      )}
     </section>
   );
 }
