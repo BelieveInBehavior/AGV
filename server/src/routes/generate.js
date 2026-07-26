@@ -242,6 +242,54 @@ router.post('/edit-videos', async (req, res) => {
   }
 });
 
+// ── POST /api/generate/extract-frames — 抽取视频帧预览 ────────────────
+router.post('/extract-frames', async (req, res) => {
+  try {
+    const db = getDB();
+    const { projectId, videoUrl, options } = req.body || {};
+    if (!projectId || !videoUrl) {
+      return res.status(400).json({ success: false, message: 'projectId 和 videoUrl 必填' });
+    }
+
+    const project = await db.collection('projects').findOne({ projectId, userId: req.userId });
+    if (!project) return res.status(404).json({ success: false, message: '项目不存在' });
+
+    const taskId = await enqueueTask({
+      type: 'EXTRACT_VIDEO_FRAMES',
+      projectId,
+      payload: { videoUrl, options: options || {} },
+    });
+
+    res.json({ success: true, taskId });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ── POST /api/generate/parse-subtitle-language — 自然语言解析字幕 ───────
+router.post('/parse-subtitle-language', async (req, res) => {
+  try {
+    const db = getDB();
+    const { projectId, videoDuration, languageText } = req.body || {};
+    if (!projectId || typeof videoDuration !== 'number' || !languageText) {
+      return res.status(400).json({ success: false, message: 'projectId、videoDuration 和 languageText 必填' });
+    }
+
+    const project = await db.collection('projects').findOne({ projectId, userId: req.userId });
+    if (!project) return res.status(404).json({ success: false, message: '项目不存在' });
+
+    const taskId = await enqueueTask({
+      type: 'PARSE_SUBTITLE_LANGUAGE',
+      projectId,
+      payload: { videoDuration, languageText },
+    });
+
+    res.json({ success: true, taskId });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // ── POST /api/generate/videos/ark/tasks — Ark 提交生视频任务（独立可复用）───
 router.post('/videos/ark/tasks', async (req, res) => {
   try {

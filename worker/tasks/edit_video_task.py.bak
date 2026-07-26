@@ -5,9 +5,8 @@ Celery Task: 视频后处理 / 剪辑
   1. 按 clipIndex 顺序读取各 clip 的 videoUrl
   2. 选择剪辑策略（单独剪辑 / 全集拼接）
   3. 调用 ffmpeg 进行转存、去人声、帧提取等后处理
-  4. 如有需要，生成 SRT 字幕文件并上传到 OSS
-  5. 上传处理后的视频到 OSS
-  6. 写回 clip.editedVideoUrl 或创建剧集级 compiledVideoUrl
+  4. 上传处理后的视频到 OSS
+  5. 写回 clip.editedVideoUrl 或创建剧集级 compiledVideoUrl
 """
 
 from __future__ import annotations
@@ -27,7 +26,7 @@ import httpx
 from celery_app import app
 from utils.db import get_db
 from utils.redis_client import publish_complete, publish_error, publish_progress, set_task_state
-from utils.reference_assets import sign_oss_url, upload_file_to_oss, _upload_bytes_to_oss
+from utils.reference_assets import sign_oss_url, upload_file_to_oss
 
 
 def _clean_http_url(value: Any) -> str:
@@ -100,25 +99,6 @@ def _remove_vocals(input_path: str, output_path: str, strength: str = 'soft') ->
         raise RuntimeError(f'ffmpeg 去人声失败: {detail or "unknown error"}')
 
 
-def _transcode_video(input_path: str, output_path: str, crf: int = 23, preset: str = 'fast') -> None:
-    """通用视频转码：H.264 + AAC"""
-    ffmpeg_bin = _ffmpeg_binary()
-    if not ffmpeg_bin:
-        raise RuntimeError('ffmpeg 不可用')
-
-    cmd = [
-        ffmpeg_bin, '-y', '-i', input_path,
-        '-c:v', 'libx264', '-crf', str(crf), '-preset', preset,
-        '-c:a', 'aac', '-b:a', '192k',
-        '-movflags', '+faststart',
-        output_path,
-    ]
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300)
-    if proc.returncode != 0 or not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-        detail = (proc.stderr or proc.stdout or '').strip()[-500:]
-        raise RuntimeError(f'ffmpeg 转码失败: {detail or "unknown error"}')
-
-
 def _merge_clips(
     input_paths: list[str],
     output_path: str,
@@ -139,7 +119,18 @@ def _merge_clips(
     if len(input_paths) == 0:
         raise ValueError('No input files')
     if len(input_paths) == 1:
-        _transcode_video(input_paths[0], output_path)
+        # 单个文件，直接复制转码
+        cmd = [
+            ffmpeg_bin, '-y', '-i', input_paths[0],
+            '-c:v', 'libx264', '-crf', '23', '-preset', 'fast',
+            '-c:a', 'aac', '-b:a', '192k',
+            '-movflags', '+faststart',
+            output_path,
+        ]
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300)
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or '').strip()[-500:]
+            raise RuntimeError(f'ffmpeg 视频转码失败: {detail or "unknown error"}')
         return
 
     # 多个文件：逐对过渡拼接
@@ -284,6 +275,39 @@ def _transcode_to_480p(input_path: str) -> str | None:
     return out_path
 
 
+def _create_subtitle_file(subtitle_text: str, video_duration: float = 10) -> str:
+    """
+    创建 SRT 格式字幕文件
+
+    Args:
+        subtitle_text: 字幕文本
+        video_duration: 视频时长（秒）
+
+    Returns:
+        字幕文件路径
+    """
+    fd, srt_path = tempfile.mkstemp(prefix='agv_sub_', suffix='.srt')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            # SRT 格式：序号\n 开始时间 --> 结束时间\n 文本\n\n
+            f.write('1\n')
+            f.write('00:00:00,000 --> 00:')
+            # 计算字幕结束时间（取视频时长或最少2秒）
+            end_sec = max(video_duration - 0.5, 2.0)
+            minutes = int(end_sec) // 60
+            seconds = int(end_sec) % 60
+            millis = int((end_sec % 1) * 1000)
+            f.write(f'{minutes:02d}:{seconds:02d},{millis:03d}\n')
+            f.write(subtitle_text + '\n\n')
+    except Exception:
+        try:
+            os.unlink(srt_path)
+        except OSError:
+            pass
+        raise
+    return srt_path
+
+
 def _get_video_duration(video_path: str) -> float:
     """获取视频时长（秒）"""
     ffmpeg_bin = _ffmpeg_binary()
@@ -305,102 +329,75 @@ def _get_video_duration(video_path: str) -> float:
     return 10.0
 
 
-def _create_subtitle_srt(subtitle_text: str, video_duration: float = 10) -> str:
-    """
-    创建 SRT 格式字幕文件
-
-    Args:
-        subtitle_text: 字幕文本
-        video_duration: 视频时长（秒）
-
-    Returns:
-        字幕文件路径
-    """
-    fd, srt_path = tempfile.mkstemp(prefix='agv_sub_', suffix='.srt')
-    try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as f:
-            f.write('1\n')
-            f.write('00:00:00,000 --> 00:')
-            end_sec = max(video_duration - 0.5, 2.0)
-            minutes = int(end_sec) // 60
-            seconds = int(end_sec) % 60
-            millis = int((end_sec % 1) * 1000)
-            f.write(f'{minutes:02d}:{seconds:02d},{millis:03d}\n')
-            f.write(subtitle_text + '\n\n')
-    except Exception:
-        try:
-            os.unlink(srt_path)
-        except OSError:
-            pass
-        raise
-    return srt_path
 
 
-def _upload_subtitle_to_oss(
-    episode_id: str,
-    subtitle_text: str,
-    file_name: str = 'subtitle.srt',
-) -> dict[str, str]:
-    """将字幕内容上传到 OSS，返回可访问的 URL"""
-    srt_path = _create_subtitle_srt(subtitle_text)
-    try:
-        uploaded = upload_file_to_oss(
-            srt_path,
-            file_name=file_name,
-            sub_dir=f'videos/episodes/{episode_id}',
-            content_type='application/x-subrip',
-        )
-        final_url = _clean_http_url(uploaded.get('url'))
-        object_key = str(uploaded.get('objectKey') or '').strip()
-        return {'url': final_url, 'objectKey': object_key}
-    finally:
-        try:
-            os.unlink(srt_path)
-        except OSError:
-            pass
+def _resolve_font_size_for_subtitle(text: str, base: int = 24, min_size: int = 14) -> int:
+    """根据字幕长度自动调整字体大小（保留用于兼容性，SRT 方式不需要）"""
+    length = len(text)
+    if length <= 20:
+        return base
+    if length <= 40:
+        return max(base - 4, min_size)
+    if length <= 80:
+        return max(base - 8, min_size)
+    return min_size
 
 
-def _resolve_subtitle_text(clip: dict, edit_opts: dict) -> str:
-    """根据 editOptions 解析单个 clip 的字幕文本"""
+def _resolve_subtitle_text(clip: dict, edit_opts: dict) -> tuple[str, str]:
+    """根据 editOptions 解析 clip 的字幕文本和位置"""
     subtitle_opts = edit_opts.get('subtitles') or {}
     if isinstance(subtitle_opts, str):
         subtitle_opts = {'mode': subtitle_opts}
 
     mode = str(subtitle_opts.get('mode', 'none')).strip()
     if mode == 'none':
-        return ''
+        return '', 'bottom'
 
     if mode == 'custom':
         text = str(subtitle_opts.get('text', '')).strip()
     else:  # auto
         text = clip.get('dialogue', '').strip() or clip.get('summary', '').strip()
 
+    # 清理文本，移除过长换行和极端字符
     text = ' '.join(text.split())
-    return text
+    if not text:
+        return '', 'bottom'
+
+    position = str(subtitle_opts.get('position', 'bottom')).strip().lower()
+    if position not in ('top', 'middle', 'bottom'):
+        position = 'bottom'
+
+    return text, position
 
 
-def _resolve_subtitle_text_for_compile(editable_clips: list, edit_opts: dict) -> str:
-    """解析全集拼接时的字幕文本"""
-    subtitle_opts = edit_opts.get('subtitles') or {}
-    if isinstance(subtitle_opts, str):
-        subtitle_opts = {'mode': subtitle_opts}
+def _apply_subtitle_if_needed(
+    input_path: str,
+    output_path: str,
+    clip: dict,
+    edit_opts: dict,
+) -> None:
+    """不硬烧字幕，直接转码。字幕作为单独文件由 OSS 存储"""
+    text, position = _resolve_subtitle_text(clip, edit_opts)
+    # 无论是否有字幕，都进行纯转码（不硬烧）
+    ffmpeg_bin = _ffmpeg_binary()
+    cmd = [
+        ffmpeg_bin, '-y', '-i', input_path,
+        '-c:v', 'libx264', '-crf', '23', '-preset', 'fast',
+        '-c:a', 'aac', '-b:a', '192k',
+        '-movflags', '+faststart',
+        output_path,
+    ]
+    proc = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=300,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError('视频转码失败')
 
-    mode = str(subtitle_opts.get('mode', 'none')).strip()
-    if mode == 'none':
-        return ''
 
-    if mode == 'custom':
-        text = str(subtitle_opts.get('text', '')).strip()
-    else:  # auto：取第一个 clip 的 summary
-        text = editable_clips[0].get('summary', '').strip() if editable_clips else ''
-
-    return ' '.join(text.split())
-
-
-def _build_subtitle_name(file_name: str) -> str:
-    """生成字幕文件名称（与视频文件同名，后缀 .srt）"""
-    base = re.sub(r'\.[^.]+$', '', file_name)
-    return f'{base}.srt'
 
 
 @app.task(
@@ -426,7 +423,7 @@ def edit_videos(
       - strategy: 'individual' | 'compile'（单独编辑 / 全集拼接，默认 individual）
       - removeVocals: true | false | 'soft' | 'hard'（是否去人声）
       - transitionDuration: 0.5（拼接过渡时长，秒）
-      - subtitles: {mode: 'none' | 'auto' | 'custom'; text?: string}
+      - subtitles: {mode: 'none' | 'auto' | 'custom'; text?: 'custom' text; position?: 'top' | 'middle' | 'bottom'}
     """
     db = get_db()
     now = datetime.now(timezone.utc)
@@ -461,7 +458,6 @@ def edit_videos(
 
         success = 0
         errors = []
-        subtitle_results: list[dict[str, str]] = []
 
         if strategy == 'individual':
             # 单独编辑每个 clip
@@ -486,14 +482,14 @@ def edit_videos(
                     os.close(out_fd)
 
                     try:
-                        # 去人声处理
+                        # 去人声 / 字幕处理流程
                         if remove_vocals:
                             vocal_strength = remove_vocals if isinstance(remove_vocals, str) else 'soft'
                             vocal_fd, vocal_path = tempfile.mkstemp(prefix='agv_vocal_', suffix='.mp4')
                             os.close(vocal_fd)
                             try:
                                 _remove_vocals(input_path, vocal_path, vocal_strength)
-                                _transcode_video(vocal_path, output_path)
+                                _apply_subtitle_if_needed(vocal_path, output_path, clip, edit_opts)
                             finally:
                                 if vocal_path != input_path:
                                     try:
@@ -501,7 +497,33 @@ def edit_videos(
                                     except OSError:
                                         pass
                         else:
-                            _transcode_video(input_path, output_path)
+                            # 只转码，不去人声，再处理字幕
+                            temp_fd, temp_path = tempfile.mkstemp(prefix='agv_temp_', suffix='.mp4')
+                            os.close(temp_fd)
+                            try:
+                                cmd = [
+                                    _ffmpeg_binary(), '-y', '-i', input_path,
+                                    '-c:v', 'libx264', '-crf', '23', '-preset', 'fast',
+                                    '-c:a', 'aac', '-b:a', '192k',
+                                    '-movflags', '+faststart',
+                                    temp_path,
+                                ]
+                                proc = subprocess.run(
+                                    cmd,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE,
+                                    text=True,
+                                    timeout=300,
+                                )
+                                if proc.returncode != 0:
+                                    raise RuntimeError('视频转码失败')
+                                _apply_subtitle_if_needed(temp_path, output_path, clip, edit_opts)
+                            finally:
+                                if temp_path != input_path:
+                                    try:
+                                        os.unlink(temp_path)
+                                    except OSError:
+                                        pass
 
                         # 上传到 OSS
                         persisted = _persist_video_to_oss(
@@ -510,35 +532,13 @@ def edit_videos(
                             f'{clip_id}_edited.mp4',
                         )
 
-                        # 处理字幕（生成 SRT 并上传）
-                        subtitle_text = _resolve_subtitle_text(clip, edit_opts)
-                        if subtitle_text:
-                            try:
-                                sub_persisted = _upload_subtitle_to_oss(
-                                    episode_id,
-                                    subtitle_text,
-                                    _build_subtitle_name(f'{clip_id}_edited.mp4'),
-                                )
-                                subtitle_results.append({
-                                    'clipId': clip_id,
-                                    'url': sub_persisted['url'],
-                                    'objectKey': sub_persisted['objectKey'],
-                                })
-                            except Exception as se:
-                                # 字幕失败不影响主流程
-                                pass
-
                         # 写回数据库
-                        update_data = {
-                            'editedVideoUrl': persisted['url'],
-                            'updatedAt': now,
-                        }
-                        if subtitle_results and subtitle_results[-1].get('clipId') == clip_id:
-                            update_data['subtitleUrl'] = subtitle_results[-1]['url']
-
                         db.clips.update_one(
                             {'clipId': clip_id},
-                            {'$set': update_data},
+                            {'$set': {
+                                'editedVideoUrl': persisted['url'],
+                                'updatedAt': now,
+                            }},
                         )
                         success += 1
                     finally:
@@ -606,28 +606,54 @@ def edit_videos(
                     else:
                         upload_source = merged_path
 
-                    # 处理字幕
-                    subtitle_text = _resolve_subtitle_text_for_compile(editable_clips, edit_opts)
-                    if subtitle_text:
+                    # 处理字幕（整集使用第一个 clip 的 summary）
+                    subtitle_opts = edit_opts.get('subtitles') or {}
+                    if isinstance(subtitle_opts, str):
+                        subtitle_opts = {'mode': subtitle_opts}
+
+                    mode = str(subtitle_opts.get('mode', 'none')).strip()
+                    if mode != 'none':
                         publish_progress(
                             task_id,
                             70,
-                            '生成字幕文件...',
+                            '处理字幕...',
                             'processing_subtitles',
                         )
-                        try:
-                            sub_persisted = _upload_subtitle_to_oss(
-                                episode_id,
-                                subtitle_text,
-                                _build_subtitle_name('compiled_episode.mp4'),
-                            )
-                            subtitle_results.append({
-                                'clipId': None,
-                                'url': sub_persisted['url'],
-                                'objectKey': sub_persisted['objectKey'],
-                            })
-                        except Exception as se:
-                            pass  # 字幕失败不影响主流程
+                        # 对整集使用自定义字幕或第一 clip 的 summary
+                        if mode == 'custom':
+                            subtitle_text = str(subtitle_opts.get('text', '')).strip()
+                        else:
+                            subtitle_text = editable_clips[0].get('summary', '').strip() if editable_clips else ''
+
+                        if subtitle_text:
+                            subtitle_pos = str(subtitle_opts.get('position', 'bottom')).strip().lower()
+                            if subtitle_pos not in ('top', 'middle', 'bottom'):
+                                subtitle_pos = 'bottom'
+
+                            sub_fd, sub_path = tempfile.mkstemp(prefix='agv_sub_', suffix='.mp4')
+                            os.close(sub_fd)
+                            try:
+                                _draw_subtitles_on_video(
+                                    upload_source,
+                                    sub_path,
+                                    subtitle_text,
+                                    position=subtitle_pos,
+                                    font_size=_resolve_font_size_for_subtitle(subtitle_text),
+                                )
+                                # 清理原 upload_source（如果是 final_path），指向新字幕视频
+                                if upload_source != merged_path:
+                                    try:
+                                        os.unlink(upload_source)
+                                    except OSError:
+                                        pass
+                                upload_source = sub_path
+                            except Exception as e:
+                                # 字幕处理失败不中断，继续上传原视频
+                                try:
+                                    os.unlink(sub_path)
+                                except OSError:
+                                    pass
+                                pass  # 无声忽略字幕错误
 
                     publish_progress(
                         task_id,
@@ -642,39 +668,32 @@ def edit_videos(
                     )
 
                     # 写回每个 clip 的 editedVideoUrl（完整集）
-                    clip_update_data: dict[str, Any] = {
-                        'editedVideoUrl': persisted['url'],
-                        'updatedAt': now,
-                    }
-                    if subtitle_results:
-                        clip_update_data['subtitleUrl'] = subtitle_results[0]['url']
-
                     db.clips.update_many(
                         {'episodeId': episode_id, 'isActive': {'$ne': False}},
-                        {'$set': clip_update_data},
+                        {'$set': {
+                            'editedVideoUrl': persisted['url'],
+                            'updatedAt': now,
+                        }},
                     )
 
                     # 更新 episode 状态
-                    episode_update_data: dict[str, Any] = {
-                        'compiledVideoUrl': persisted['url'],
-                        'status': 'edited',
-                        'updatedAt': now,
-                    }
-                    if subtitle_results:
-                        episode_update_data['subtitleUrl'] = subtitle_results[0]['url']
-
                     db.episodes.update_one(
                         {'episodeId': episode_id},
-                        {'$set': episode_update_data},
+                        {'$set': {
+                            'compiledVideoUrl': persisted['url'],
+                            'status': 'edited',
+                            'updatedAt': now,
+                        }},
                     )
                     success = len(editable_clips)
                 finally:
                     # 清理临时文件
-                    if upload_source and upload_source != merged_path:
-                        try:
-                            os.unlink(upload_source)
-                        except OSError:
-                            pass
+                    for path in (merged_path, upload_source):
+                        if path and path != merged_path:
+                            try:
+                                os.unlink(path)
+                            except OSError:
+                                pass
                     try:
                         os.unlink(merged_path)
                     except OSError:
@@ -694,7 +713,6 @@ def edit_videos(
             'successCount': success,
             'failedCount': len(errors),
             'errors': errors,
-            'subtitleResults': subtitle_results,
         }
         publish_complete(task_id, result_data)
         return result_data

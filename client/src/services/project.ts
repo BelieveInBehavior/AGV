@@ -282,6 +282,30 @@ export async function editVideos(
   return data.taskId;
 }
 
+export async function extractVideoFrames(
+  projectId: string,
+  videoUrl: string,
+  options?: { maxFrames?: number; width?: number },
+): Promise<string> {
+  const data = await request<{ taskId: string }>(`${API_BASE}/generate/extract-frames`, {
+    method: 'POST',
+    body: JSON.stringify({ projectId, videoUrl, options }),
+  });
+  return data.taskId;
+}
+
+export async function parseSubtitleLanguage(
+  projectId: string,
+  videoDuration: number,
+  languageText: string,
+): Promise<string> {
+  const data = await request<{ taskId: string }>(`${API_BASE}/generate/parse-subtitle-language`, {
+    method: 'POST',
+    body: JSON.stringify({ projectId, videoDuration, languageText }),
+  });
+  return data.taskId;
+}
+
 export async function createArkVideoTask(input: CreateArkVideoTaskInput): Promise<Record<string, unknown>> {
   const data = await request<{ result: Record<string, unknown> }>(`${API_BASE}/generate/videos/ark/tasks`, {
     method: 'POST',

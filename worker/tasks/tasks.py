@@ -7,5 +7,6 @@ from . import image_task  # noqa: F401
 from . import reference_image_task  # noqa: F401
 from . import story_task  # noqa: F401
 from . import storyboard_task  # noqa: F401
+from . import subtitle_task  # noqa: F401
 from . import transition_task  # noqa: F401
 from . import video_task  # noqa: F401

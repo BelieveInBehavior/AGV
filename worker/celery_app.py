@@ -45,6 +45,7 @@ app.conf.update(
         'tasks.reference_image_task.*':   {'queue': 'image'},
         'tasks.video_task.*':             {'queue': 'video'},
         'tasks.edit_video_task.*':        {'queue': 'video'},
+        'tasks.subtitle_task.*':          {'queue': 'video'},
         'tasks.evaluation_task.*':        {'queue': 'storyboard'},
     },
 

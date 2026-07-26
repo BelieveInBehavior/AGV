@@ -98,6 +98,8 @@ export interface Episode {
   clipIds: string[];
   /** 全集拼接后的完整视频 URL */
   compiledVideoUrl?: string | null;
+  /** 全集字幕文件 URL */
+  subtitleUrl?: string | null;
   evaluation?: EpisodeEvaluation | null;
   createdAt: string;
   updatedAt: string;
@@ -181,6 +183,8 @@ export interface Clip {
   videoUrl?: string | null;
   /** 剪辑后的最终视频 URL（从完整集视频剪辑得到） */
   editedVideoUrl?: string | null;
+  /** 字幕文件 URL（SRT/WebVTT） */
+  subtitleUrl?: string | null;
   panels: Panel[];
   /** 本情节临时覆盖参考图（角色名 → URL；locationImage 覆盖当前场景，优先 OSS URL） */
   referenceOverrides?: {
@@ -193,7 +197,7 @@ export interface Clip {
 
 export interface Task {
   taskId: string;
-  type: 'STORY_ANALYSIS' | 'BEAT_PROMPT_GEN' | 'STORYBOARD_GEN' | 'IMAGE_GENERATION' | 'VIDEO_GENERATION' | 'VIDEO_EDITING' | 'EPISODE_EVALUATION';
+  type: 'STORY_ANALYSIS' | 'BEAT_PROMPT_GEN' | 'STORYBOARD_GEN' | 'IMAGE_GENERATION' | 'VIDEO_GENERATION' | 'VIDEO_EDITING' | 'EPISODE_EVALUATION' | 'EXTRACT_VIDEO_FRAMES' | 'PARSE_SUBTITLE_LANGUAGE';
   status: 'pending' | 'queued' | 'claimed' | 'running' | 'retrying' | 'completed' | 'failed';
   progress: number;
   message: string;

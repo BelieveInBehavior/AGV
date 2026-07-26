@@ -11,6 +11,8 @@ import {
   generateImages,
   generateVideos,
   editVideos,
+  extractVideoFrames,
+  parseSubtitleLanguage,
   evaluateEpisode,
   getTask,
   listTasks,
@@ -33,7 +35,49 @@ import {
 import { effectiveCharacterRefUrl, sceneRefReady } from './visualRefHelpers';
 
 type Stage = 'input' | 'clips' | 'prompts' | 'video' | 'editing';
-type EvaluationScope = 'story_analysis' | 'beat_frames' | 'all';
+type SubtitleCue = {
+  start: number;
+  end: number;
+  text: string;
+  vertical: 'top' | 'middle' | 'bottom';
+  align: 'start' | 'center' | 'end';
+};
+
+const SUBTITLE_VERTICAL_OPTIONS: { label: string; value: SubtitleCue['vertical'] }[] = [
+  { label: '上方', value: 'top' },
+  { label: '中间', value: 'middle' },
+  { label: '下方', value: 'bottom' },
+];
+
+const SUBTITLE_ALIGN_OPTIONS: { label: string; value: SubtitleCue['align'] }[] = [
+  { label: '左对齐', value: 'start' },
+  { label: '居中', value: 'center' },
+  { label: '右对齐', value: 'end' },
+];
+
+function formatSrtTime(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  const ms = Math.round((seconds % 1) * 1000);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
+}
+
+function cuesToSrt(cues: SubtitleCue[]): string {
+  return cues
+    .map((cue, idx) => {
+      const start = formatSrtTime(cue.start);
+      const end = formatSrtTime(cue.end);
+      return `${idx + 1}\n${start} --> ${end}\n${cue.text}\n`;
+    })
+    .join('\n');
+}
+
+function generateDefaultCue(videoDuration: number, start?: number): SubtitleCue {
+  const s = typeof start === 'number' ? start : 0;
+  const e = Math.min(s + 3, videoDuration || 10);
+  return { start: s, end: e, text: '', vertical: 'bottom', align: 'center' };
+}
 
 function scopesToModalScope(scopes: ('story_analysis' | 'beat_frames')[]): EvaluationScope {
   return scopes.length >= 2 ? 'all' : scopes[0];
@@ -172,6 +216,18 @@ export default function ProjectPage() {
   const [editStrategy, setEditStrategy] = useState<'individual' | 'compile'>('compile');
   const [removeVocals, setRemoveVocals] = useState(false);
   const [editTransition, setEditTransition] = useState(0.5);
+  const [subtitleMode, setSubtitleMode] = useState<'none' | 'auto' | 'custom' | 'timeline'>('none');
+  const [subtitleText, setSubtitleText] = useState('');
+  const [subtitlePosition, setSubtitlePosition] = useState<'top' | 'middle' | 'bottom'>('bottom');
+  const [subtitleEditorOpen, setSubtitleEditorOpen] = useState(false);
+  const [subtitleEditorUrl, setSubtitleEditorUrl] = useState<string | null>(null);
+  const [subtitleEditorDuration, setSubtitleEditorDuration] = useState(0);
+  const [subtitleCues, setSubtitleCues] = useState<SubtitleCue[]>([]);
+  const [subtitleLanguageText, setSubtitleLanguageText] = useState('');
+  const [subtitleFrameTaskId, setSubtitleFrameTaskId] = useState<string | null>(null);
+  const [subtitleParseTaskId, setSubtitleParseTaskId] = useState<string | null>(null);
+  const [subtitleFrames, setSubtitleFrames] = useState<{ timestamp: number; imageUrl: string }[]>([]);
+  const [selectedCueIndex, setSelectedCueIndex] = useState<number | null>(null);
   const [videoTaskIdsByClip, setVideoTaskIdsByClip] = useState<Record<string, string>>({});
   const [evaluationModal, setEvaluationModal] = useState<{ open: boolean; scope: EvaluationScope }>({
     open: false,
@@ -477,6 +533,15 @@ export default function ProjectPage() {
     if (!projectId || !activeEpisode) return;
     setError('');
     const clipIds = readyBeatVideoClipIds.length > 0 ? readyBeatVideoClipIds : undefined;
+
+    // 如果开启了时间轴字幕，把 cues 转成 SRT
+    let finalSubtitleText = '';
+    if (subtitleMode === 'timeline' && subtitleCues.length > 0) {
+      finalSubtitleText = cuesToSrt(subtitleCues);
+    } else if (subtitleMode === 'custom') {
+      finalSubtitleText = subtitleText;
+    }
+
     try {
       const taskId = await editVideos(projectId, activeEpisode.episodeId, {
         clipIds,
@@ -484,6 +549,11 @@ export default function ProjectPage() {
           strategy: editStrategy,
           removeVocals: removeVocals ? 'soft' : false,
           transitionDuration: editTransition,
+          subtitles: {
+            mode: subtitleMode === 'timeline' ? 'custom' : subtitleMode,
+            text: finalSubtitleText || undefined,
+            position: subtitlePosition,
+          },
         },
       });
       addTask(taskId, 'VIDEO_EDITING', activeEpisode.episodeId);
@@ -492,6 +562,89 @@ export default function ProjectPage() {
       setError(e instanceof Error ? e.message : '剪辑失败');
     }
   };
+
+  const openSubtitleEditor = (videoUrl: string) => {
+    setSubtitleEditorUrl(videoUrl);
+    setSubtitleEditorDuration(0);
+    setSubtitleCues([]);
+    setSubtitleFrames([]);
+    setSelectedCueIndex(null);
+    setSubtitleEditorOpen(true);
+    void startExtractFrames(videoUrl);
+  };
+
+  const startExtractFrames = async (videoUrl: string) => {
+    if (!projectId) return;
+    setError('');
+    try {
+      const taskId = await extractVideoFrames(projectId, videoUrl, { maxFrames: 12, width: 320 });
+      setSubtitleFrameTaskId(taskId);
+      addTask(taskId, 'EXTRACT_VIDEO_FRAMES');
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : '抽帧失败');
+    }
+  };
+
+  const handleParseSubtitleLanguage = async () => {
+    if (!projectId || !subtitleLanguageText.trim() || subtitleEditorDuration <= 0) return;
+    setError('');
+    try {
+      const taskId = await parseSubtitleLanguage(projectId, subtitleEditorDuration, subtitleLanguageText);
+      setSubtitleParseTaskId(taskId);
+      addTask(taskId, 'PARSE_SUBTITLE_LANGUAGE');
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : '解析失败');
+    }
+  };
+
+  const addSubtitleCue = (timestamp?: number) => {
+    setSubtitleCues((prev) => [...prev, generateDefaultCue(subtitleEditorDuration, timestamp)]);
+    setSelectedCueIndex(subtitleCues.length);
+  };
+
+  const updateSubtitleCue = (index: number, patch: Partial<SubtitleCue>) => {
+    setSubtitleCues((prev) =>
+      prev.map((cue, i) => (i === index ? { ...cue, ...patch } : cue))
+    );
+  };
+
+  const removeSubtitleCue = (index: number) => {
+    setSubtitleCues((prev) => prev.filter((_, i) => i !== index));
+    if (selectedCueIndex === index) setSelectedCueIndex(null);
+    else if (selectedCueIndex !== null && selectedCueIndex > index) setSelectedCueIndex(selectedCueIndex - 1);
+  };
+
+  const closeSubtitleEditor = () => {
+    setSubtitleEditorOpen(false);
+    setSubtitleEditorUrl(null);
+    setSubtitleFrameTaskId(null);
+    setSubtitleParseTaskId(null);
+  };
+
+  // 处理抽帧/解析任务结果
+  useEffect(() => {
+    if (subtitleFrameTaskId && tasks[subtitleFrameTaskId]?.status === 'completed') {
+      const result = tasks[subtitleFrameTaskId].result as { frames?: { timestamp: number; imageUrl: string }[]; duration?: number } | undefined;
+      if (result?.frames) setSubtitleFrames(result.frames);
+      if (result?.duration) setSubtitleEditorDuration(result.duration);
+      setSubtitleFrameTaskId(null);
+    }
+    if (subtitleParseTaskId && tasks[subtitleParseTaskId]?.status === 'completed') {
+      const result = tasks[subtitleParseTaskId].result as { cues?: { start: number; end: number; text: string; position?: { vertical?: string; align?: string } }[] } | undefined;
+      if (result?.cues) {
+        setSubtitleCues(
+          result.cues.map((c) => ({
+            start: c.start,
+            end: c.end,
+            text: c.text,
+            vertical: (c.position?.vertical as SubtitleCue['vertical']) || 'bottom',
+            align: (c.position?.align as SubtitleCue['align']) || 'center',
+          }))
+        );
+      }
+      setSubtitleParseTaskId(null);
+    }
+  }, [tasks, subtitleFrameTaskId, subtitleParseTaskId]);
 
   const handleEvaluate = async (scopes: ('story_analysis' | 'beat_frames')[]) => {
     if (!projectId || !activeEpisode) return;
@@ -613,6 +766,8 @@ export default function ProjectPage() {
                   VIDEO_GENERATION: '视频生成',
                   VIDEO_EDITING: '生成最终视频',
                   EPISODE_EVALUATION: '质量评估',
+                  EXTRACT_VIDEO_FRAMES: '视频抽帧',
+                  PARSE_SUBTITLE_LANGUAGE: '解析字幕',
                 }[t.type]
               }
             </span>
@@ -1058,6 +1213,79 @@ export default function ProjectPage() {
                   </label>
                 </div>
               )}
+              <div className="edit-option-row">
+                <label className="edit-label">
+                  字幕
+                  <select
+                    className="edit-select"
+                    value={subtitleMode}
+                    onChange={(e) => setSubtitleMode(e.target.value as 'none' | 'auto' | 'custom' | 'timeline')}
+                    disabled={runningTasks.length > 0}
+                  >
+                    <option value="none">无字幕</option>
+                    <option value="auto">自动生成（使用情节文字）</option>
+                    <option value="custom">自定义文本</option>
+                    <option value="timeline">时间轴编辑（帧级精确控制）</option>
+                  </select>
+                </label>
+              </div>
+              {subtitleMode === 'timeline' && (
+                <div className="edit-option-row">
+                  <button
+                    className="btn-primary"
+                    onClick={() => {
+                      if (clips.length > 0 && clips[0].videoUrl) {
+                        openSubtitleEditor(clips[0].videoUrl);
+                      } else {
+                        setError('请先确保至少有一个生成的视频');
+                      }
+                    }}
+                    disabled={runningTasks.length > 0}
+                  >
+                    📝 打开时间轴编辑器
+                  </button>
+                </div>
+              )}
+              {subtitleMode === 'custom' && (
+                <div className="edit-option-row">
+                  <label className="edit-label">
+                    字幕文本
+                    <textarea
+                      className="edit-textarea"
+                      value={subtitleText}
+                      onChange={(e) => setSubtitleText(e.target.value)}
+                      disabled={runningTasks.length > 0}
+                      placeholder="输入要显示的字幕..."
+                      rows={2}
+                    />
+                  </label>
+                </div>
+              )}
+              {subtitleMode !== 'none' && (
+                <div className="edit-option-row">
+                  <label className="edit-label">
+                    字幕位置
+                    <select
+                      className="edit-select"
+                      value={subtitlePosition}
+                      onChange={(e) => setSubtitlePosition(e.target.value as 'top' | 'middle' | 'bottom')}
+                      disabled={runningTasks.length > 0}
+                    >
+                      <option value="top">上方</option>
+                      <option value="middle">中间</option>
+                      <option value="bottom">下方</option>
+                    </select>
+                  </label>
+                </div>
+              )}
+              {subtitleMode === 'timeline' && subtitleCues.length > 0 && (
+                <div className="edit-option-row">
+                  <label className="edit-label">
+                    已编辑 {subtitleCues.length} 条字幕
+                    <span className="subtitle-preview-count" />
+                  </label>
+                </div>
+              )}
               <div className="edit-actions">
                 <button
                   className="btn-primary btn-large"
@@ -1110,6 +1338,195 @@ export default function ProjectPage() {
           </div>
         )}
       </div>
+
+      {/* ── 字幕编辑器模态框 ── */}
+      {subtitleEditorOpen && (
+        <div className="modal-overlay" onClick={closeSubtitleEditor}>
+          <div className="modal-content subtitle-editor-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>时间轴字幕编辑器</h2>
+              <button className="modal-close" onClick={closeSubtitleEditor}>×</button>
+            </div>
+
+            <div className="subtitle-editor-body">
+              {/* 帧网格展示 */}
+              {subtitleFrames.length > 0 && (
+                <div className="frames-section">
+                  <h3>视频帧预览</h3>
+                  <div className="frames-grid">
+                    {subtitleFrames.map((frame, idx) => (
+                      <div
+                        key={idx}
+                        className="frame-cell"
+                        onClick={() => {
+                          addSubtitleCue(frame.timestamp);
+                          setSelectedCueIndex(subtitleCues.length);
+                        }}
+                        title={`点击在 ${formatSrtTime(frame.timestamp)} 添加字幕`}
+                      >
+                        <img src={frame.imageUrl} alt={`帧 ${idx}`} className="frame-image" />
+                        <span className="frame-time">{formatSrtTime(frame.timestamp)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="frames-hint">点击任意帧在该时刻添加字幕</p>
+                </div>
+              )}
+
+              {/* 自然语言解析 */}
+              <div className="language-input-section">
+                <h3>自然语言描述</h3>
+                <textarea
+                  className="language-textarea"
+                  value={subtitleLanguageText}
+                  onChange={(e) => setSubtitleLanguageText(e.target.value)}
+                  placeholder="例如：0秒显示「开场」，3秒显示「开始冒险」，顶部居中。或者直接输入时间和位置描述..."
+                  rows={3}
+                />
+                <div className="language-actions">
+                  <button
+                    className="btn-primary"
+                    onClick={handleParseSubtitleLanguage}
+                    disabled={!subtitleLanguageText.trim() || subtitleEditorDuration <= 0 || tasks[subtitleParseTaskId!]?.status === 'running'}
+                  >
+                    {subtitleParseTaskId && tasks[subtitleParseTaskId]?.status === 'running' ? '解析中...' : '🤖 解析成字幕'}
+                  </button>
+                </div>
+              </div>
+
+              {/* 字幕列表编辑 */}
+              <div className="cues-section">
+                <div className="cues-header">
+                  <h3>字幕列表</h3>
+                  <button className="btn-ghost btn-small" onClick={() => addSubtitleCue()} disabled={subtitleEditorDuration <= 0}>
+                    ➕ 添加字幕
+                  </button>
+                </div>
+
+                {subtitleCues.length === 0 ? (
+                  <p className="empty-hint">暂无字幕，点击帧或使用自然语言描述添加</p>
+                ) : (
+                  <div className="cues-list">
+                    {subtitleCues.map((cue, idx) => (
+                      <div
+                        key={idx}
+                        className={`cue-card ${selectedCueIndex === idx ? 'selected' : ''}`}
+                        onClick={() => setSelectedCueIndex(selectedCueIndex === idx ? null : idx)}
+                      >
+                        <div className="cue-header">
+                          <span className="cue-index">字幕 {idx + 1}</span>
+                          <span className="cue-time">
+                            {formatSrtTime(cue.start)} → {formatSrtTime(cue.end)}
+                          </span>
+                          <button
+                            className="btn-small btn-ghost"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeSubtitleCue(idx);
+                            }}
+                          >
+                            🗑️
+                          </button>
+                        </div>
+
+                        {selectedCueIndex === idx && (
+                          <div className="cue-edit-panel">
+                            <div className="cue-edit-row">
+                              <label>文本</label>
+                              <textarea
+                                value={cue.text}
+                                onChange={(e) => updateSubtitleCue(idx, { text: e.target.value })}
+                                rows={2}
+                                className="cue-text-input"
+                                placeholder="输入字幕文本..."
+                              />
+                            </div>
+
+                            <div className="cue-edit-row">
+                              <label>开始时间（秒）</label>
+                              <input
+                                type="number"
+                                min="0"
+                                max={subtitleEditorDuration}
+                                step="0.1"
+                                value={cue.start}
+                                onChange={(e) => updateSubtitleCue(idx, { start: parseFloat(e.target.value) })}
+                                className="cue-time-input"
+                              />
+                            </div>
+
+                            <div className="cue-edit-row">
+                              <label>结束时间（秒）</label>
+                              <input
+                                type="number"
+                                min="0"
+                                max={subtitleEditorDuration}
+                                step="0.1"
+                                value={cue.end}
+                                onChange={(e) => updateSubtitleCue(idx, { end: parseFloat(e.target.value) })}
+                                className="cue-time-input"
+                              />
+                            </div>
+
+                            <div className="cue-edit-row">
+                              <label>垂直位置</label>
+                              <select
+                                value={cue.vertical}
+                                onChange={(e) => updateSubtitleCue(idx, { vertical: e.target.value as SubtitleCue['vertical'] })}
+                                className="cue-select"
+                              >
+                                {SUBTITLE_VERTICAL_OPTIONS.map((opt) => (
+                                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div className="cue-edit-row">
+                              <label>水平对齐</label>
+                              <select
+                                value={cue.align}
+                                onChange={(e) => updateSubtitleCue(idx, { align: e.target.value as SubtitleCue['align'] })}
+                                className="cue-select"
+                              >
+                                {SUBTITLE_ALIGN_OPTIONS.map((opt) => (
+                                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        )}
+
+                        {selectedCueIndex !== idx && (
+                          <div className="cue-preview">
+                            <p className="cue-text-preview">{cue.text}</p>
+                            <span className="cue-position-badge">
+                              {SUBTITLE_VERTICAL_OPTIONS.find(o => o.value === cue.vertical)?.label} · {SUBTITLE_ALIGN_OPTIONS.find(o => o.value === cue.align)?.label}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn-ghost" onClick={closeSubtitleEditor}>取消</button>
+              <button
+                className="btn-primary"
+                onClick={() => {
+                  setSubtitleMode('timeline');
+                  closeSubtitleEditor();
+                }}
+                disabled={subtitleCues.length === 0}
+              >
+                ✓ 确认编辑
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <EpisodeEvaluationModal
         open={evaluationModal.open}

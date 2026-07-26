@@ -183,4 +183,32 @@ export const CeleryTasks = {
       taskId,
     });
   },
+
+  async extractVideoFrames({ taskId, projectId, videoUrl, options = {} }) {
+    return publishCeleryTask({
+      taskName: 'tasks.subtitle_task.extract_video_frames',
+      kwargs: {
+        task_id: taskId,
+        project_id: projectId,
+        video_url: videoUrl,
+        options,
+      },
+      queue: 'video',
+      taskId,
+    });
+  },
+
+  async parseSubtitleLanguage({ taskId, projectId, videoDuration, languageText }) {
+    return publishCeleryTask({
+      taskName: 'tasks.subtitle_task.parse_subtitle_language',
+      kwargs: {
+        task_id: taskId,
+        project_id: projectId,
+        video_duration: videoDuration,
+        language_text: languageText,
+      },
+      queue: 'storyboard',
+      taskId,
+    });
+  },
 };

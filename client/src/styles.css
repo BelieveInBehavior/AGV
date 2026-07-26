@@ -1234,3 +1234,263 @@ button.stage-step.stage-step-nav.locked {
 .evaluation-issue p { margin: 2px 0 0; }
 .issue-suggestion { color: #34d399; }
 .evaluation-empty { font-size: 12px; color: #6b7aaf; }
+
+/* ── Subtitle Editor Modal ───────────────────────────────────────── */
+.subtitle-editor-modal {
+  max-width: 900px;
+  max-height: min(92vh, 900px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 24px 12px;
+  border-bottom: 1px solid #2a3254;
+  flex-shrink: 0;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 18px;
+  color: #e6e8f2;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: #9ca7d3;
+  font-size: 24px;
+  cursor: pointer;
+  padding: 4px 10px;
+  line-height: 1;
+}
+
+.modal-close:hover {
+  color: #e6e8f2;
+}
+
+.subtitle-editor-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.frames-section h3,
+.language-input-section h3,
+.cues-section h3 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: #9ca7d3;
+}
+
+.frames-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.frame-cell {
+  background: #0f1428;
+  border: 1px solid #1e2647;
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s;
+}
+
+.frame-cell:hover {
+  border-color: #4c6ef5;
+  transform: translateY(-2px);
+}
+
+.frame-image {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  display: block;
+}
+
+.frame-time {
+  display: block;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: #6b7aaf;
+  text-align: center;
+}
+
+.frames-hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #6b7aaf;
+}
+
+.language-textarea {
+  width: 100%;
+  background: #0f1428;
+  border: 1px solid #2a3254;
+  border-radius: 8px;
+  color: #e6e8f2;
+  padding: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 80px;
+  font-family: inherit;
+}
+
+.language-textarea:focus {
+  outline: none;
+  border-color: #3b5bdb;
+}
+
+.language-actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-start;
+}
+
+.cues-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.cues-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cue-card {
+  background: #0f1428;
+  border: 1px solid #1e2647;
+  border-radius: 10px;
+  padding: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.cue-card.selected,
+.cue-card:hover {
+  border-color: #4c6ef5;
+}
+
+.cue-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.cue-index {
+  font-size: 12px;
+  font-weight: 700;
+  color: #748ffc;
+}
+
+.cue-time {
+  flex: 1;
+  font-size: 12px;
+  color: #9ca7d3;
+}
+
+.cue-edit-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #1e2647;
+}
+
+.cue-edit-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cue-edit-row label {
+  font-size: 12px;
+  color: #9ca7d3;
+}
+
+.cue-text-input {
+  width: 100%;
+  background: #0a0e1a;
+  border: 1px solid #2a3254;
+  border-radius: 6px;
+  color: #c5cee8;
+  padding: 8px 10px;
+  font-size: 13px;
+  resize: vertical;
+  min-height: 60px;
+  font-family: inherit;
+}
+
+.cue-text-input:focus {
+  outline: none;
+  border-color: #3b5bdb;
+}
+
+.cue-time-input,
+.cue-select {
+  background: #0a0e1a;
+  border: 1px solid #2a3254;
+  border-radius: 6px;
+  color: #c5cee8;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.cue-time-input:focus,
+.cue-select:focus {
+  outline: none;
+  border-color: #3b5bdb;
+}
+
+.cue-preview {
+  margin-top: 4px;
+}
+
+.cue-text-preview {
+  margin: 0;
+  font-size: 13px;
+  color: #d0d8ff;
+  line-height: 1.5;
+  min-height: 1.5em;
+}
+
+.cue-position-badge {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 11px;
+  color: #6b7aaf;
+  background: #1e2647;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 24px;
+  border-top: 1px solid #2a3254;
+  flex-shrink: 0;
+}
+
+.subtitle-preview-count {
+  margin-left: 8px;
+  color: #69db7c;
+  font-size: 12px;
+}

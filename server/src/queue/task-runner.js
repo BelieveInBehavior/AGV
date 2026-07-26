@@ -20,7 +20,7 @@ import { emitStoryAnalysisEnqueuedSpan, logPipelineEvent } from '../utils/pipeli
  * 创建并发布任务
  *
  * @param {{
- *   type: 'STORY_ANALYSIS'|'BEAT_PROMPT_GEN'|'STORYBOARD_GEN'|'IMAGE_GENERATION'|'VIDEO_GENERATION'|'EPISODE_EVALUATION'|'VIDEO_EDITING',
+ *   type: 'STORY_ANALYSIS'|'BEAT_PROMPT_GEN'|'STORYBOARD_GEN'|'IMAGE_GENERATION'|'VIDEO_GENERATION'|'EPISODE_EVALUATION'|'VIDEO_EDITING'|'EXTRACT_VIDEO_FRAMES'|'PARSE_SUBTITLE_LANGUAGE',
  *   projectId: string,
  *   episodeId?: string,
  *   payload?: object
@@ -146,6 +146,24 @@ export async function enqueueTask({ type, projectId, episodeId, payload = {} }) 
           projectId,
           clipIds: payload.clipIds || [],
           editOptions: payload.editOptions || {},
+        });
+        break;
+
+      case 'EXTRACT_VIDEO_FRAMES':
+        await CeleryTasks.extractVideoFrames({
+          taskId,
+          projectId,
+          videoUrl: payload.videoUrl,
+          options: payload.options || {},
+        });
+        break;
+
+      case 'PARSE_SUBTITLE_LANGUAGE':
+        await CeleryTasks.parseSubtitleLanguage({
+          taskId,
+          projectId,
+          videoDuration: payload.videoDuration,
+          languageText: payload.languageText,
         });
         break;
 
