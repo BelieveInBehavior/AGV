@@ -168,4 +168,19 @@ export const CeleryTasks = {
       taskId,
     });
   },
+
+  async editVideos({ taskId, projectId, episodeId, clipIds = [], editOptions = {} }) {
+    return publishCeleryTask({
+      taskName: 'tasks.edit_video_task.edit_videos',
+      kwargs: {
+        task_id: taskId,
+        project_id: projectId,
+        episode_id: episodeId,
+        clip_ids: clipIds,
+        edit_options: editOptions,
+      },
+      queue: 'video',
+      taskId,
+    });
+  },
 };

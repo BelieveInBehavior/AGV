@@ -1,5 +1,19 @@
 """Collect character / location reference image URLs for a clip (project library + per-clip overrides)."""
 
+from __future__ import annotations
+
+from base64 import b64encode
+from datetime import datetime
+from email.utils import formatdate
+import hashlib
+import hmac
+import mimetypes
+import os
+from pathlib import Path
+from uuid import uuid4
+from urllib.parse import parse_qsl, quote, urlencode, urlparse
+from urllib.request import Request, urlopen
+
 
 def location_reference_url(project: dict | None, clip: dict | None) -> str | None:
     """仅场景 establishing 参考图 URL（无则 None）。"""
@@ -183,13 +197,125 @@ def reference_descriptions_for_prompt(project: dict | None, clip: dict | None) -
     return 'Consistency anchors — ' + ' | '.join(parts)
 
 
+def _load_oss_config() -> tuple[str, str, str, str]:
+    oss_key = os.getenv('OSS_ACCESS_KEY_ID')
+    oss_secret = os.getenv('OSS_ACCESS_KEY_SECRET')
+    oss_bucket = os.getenv('OSS_BUCKET')
+    oss_endpoint = os.getenv('OSS_ENDPOINT')
+
+    if not all([oss_key, oss_secret, oss_bucket, oss_endpoint]):
+        try:
+            import config  # noqa: F401  # load_dotenv side effect
+        except Exception:
+            pass
+        oss_key = os.getenv('OSS_ACCESS_KEY_ID')
+        oss_secret = os.getenv('OSS_ACCESS_KEY_SECRET')
+        oss_bucket = os.getenv('OSS_BUCKET')
+        oss_endpoint = os.getenv('OSS_ENDPOINT')
+
+    if not all([oss_key, oss_secret, oss_bucket, oss_endpoint]):
+        raise ValueError('OSS not configured')
+
+    return str(oss_key), str(oss_secret), str(oss_bucket), str(oss_endpoint)
+
+
+def _build_object_key(file_name: str, sub_dir: str, fallback_ext: str = '') -> str:
+    timestamp = int(datetime.now().timestamp() * 1000)
+    uuid_short = str(uuid4())[:8]
+    ext = Path(file_name or '').suffix.lower()
+    final_ext = ext or fallback_ext.lower()
+    return f"AGV/{sub_dir}/{timestamp}_{uuid_short}{final_ext}"
+
+
+def _build_object_url(oss_bucket: str, oss_endpoint: str, object_key: str) -> str:
+    encoded_key = '/'.join(quote(part, safe='') for part in object_key.split('/'))
+    return f"https://{oss_bucket}.{oss_endpoint}/{encoded_key}"
+
+
+def _build_signed_get_url(
+    oss_key: str,
+    oss_secret: str,
+    oss_bucket: str,
+    oss_endpoint: str,
+    object_key: str,
+    expires_seconds: int = 315360000,
+) -> str:
+    expires_at = int(datetime.now().timestamp()) + max(int(expires_seconds), 1)
+    canonical_resource = f'/{oss_bucket}/{object_key}'
+    string_to_sign = f'GET\n\n\n{expires_at}\n{canonical_resource}'
+    signature = b64encode(
+        hmac.new(oss_secret.encode('utf-8'), string_to_sign.encode('utf-8'), hashlib.sha1).digest()
+    ).decode('utf-8')
+    query = urlencode({
+        'OSSAccessKeyId': oss_key,
+        'Expires': str(expires_at),
+        'Signature': signature,
+    })
+    return f'{_build_object_url(oss_bucket, oss_endpoint, object_key)}?{query}'
+
+
+def _upload_bytes_to_oss(
+    payload: bytes,
+    *,
+    content_type: str,
+    object_key: str,
+    cache_control: str = 'public, max-age=31536000',
+) -> dict:
+    oss_key, oss_secret, oss_bucket, oss_endpoint = _load_oss_config()
+
+    if not payload:
+        raise ValueError('Upload payload is empty')
+
+    def signed_url() -> str:
+        return _build_signed_get_url(oss_key, oss_secret, oss_bucket, oss_endpoint, object_key)
+
+    def object_url() -> str:
+        return _build_object_url(oss_bucket, oss_endpoint, object_key)
+
+    try:
+        import oss2
+
+        auth = oss2.Auth(oss_key, oss_secret)
+        bucket = oss2.Bucket(auth, f"https://{oss_endpoint}", oss_bucket)
+        bucket.put_object(object_key, payload, headers={
+            'Content-Type': content_type,
+            'Cache-Control': cache_control,
+        })
+        return {'url': signed_url(), 'objectKey': object_key}
+    except ImportError:
+        pass
+    except Exception as e:
+        raise ValueError(f'Failed to upload to OSS: {e}')
+
+    try:
+        request_date = formatdate(usegmt=True)
+        canonical_resource = f'/{oss_bucket}/{object_key}'
+        string_to_sign = f'PUT\n\n{content_type}\n{request_date}\n{canonical_resource}'
+        signature = b64encode(
+            hmac.new(oss_secret.encode('utf-8'), string_to_sign.encode('utf-8'), hashlib.sha1).digest()
+        ).decode('utf-8')
+
+        req = Request(object_url(), data=payload, method='PUT')
+        req.add_header('Date', request_date)
+        req.add_header('Content-Type', content_type)
+        req.add_header('Cache-Control', cache_control)
+        req.add_header('Authorization', f'OSS {oss_key}:{signature}')
+        req.add_header('Content-Length', str(len(payload)))
+
+        with urlopen(req, timeout=300) as resp:
+            status = getattr(resp, 'status', None) or resp.getcode()
+            if status < 200 or status >= 300:
+                raise ValueError(f'OSS upload failed with status {status}')
+
+        return {'url': signed_url(), 'objectKey': object_key}
+    except Exception as e:
+        raise ValueError(f'Failed to upload to OSS without oss2: {e}')
+
+
 def upload_image_data_url_to_oss(data_url: str, file_name: str = '', sub_dir: str = 'uploads') -> dict:
     """将 base64 data URL 上传到 OSS。返回 {'url': oss_url, 'objectKey': key}"""
     import base64
     import re
-    import os
-    from datetime import datetime
-    from uuid import uuid4
 
     if not isinstance(data_url, str) or not data_url.startswith('data:'):
         raise ValueError('Invalid data URL format')
@@ -220,40 +346,67 @@ def upload_image_data_url_to_oss(data_url: str, file_name: str = '', sub_dir: st
     if not image_buffer:
         raise ValueError('Image buffer is empty')
 
-    # 生成 object key
-    timestamp = int(datetime.now().timestamp() * 1000)
-    uuid_short = str(uuid4())[:8]
-    object_key = f"AGV/{sub_dir}/{timestamp}_{uuid_short}{ext}"
+    object_key = _build_object_key(file_name, sub_dir, ext)
+    return _upload_bytes_to_oss(image_buffer, content_type=mime_type, object_key=object_key)
 
-    # 上传到 OSS
+
+def upload_file_to_oss(
+    file_path: str,
+    file_name: str = '',
+    sub_dir: str = 'uploads',
+    content_type: str | None = None,
+) -> dict:
+    """上传本地文件到 OSS。返回 {'url': oss_url, 'objectKey': key}"""
+    local_path = Path(file_path)
+    if not local_path.exists() or not local_path.is_file():
+        raise ValueError('Upload file does not exist')
+
+    resolved_file_name = file_name or local_path.name
+    guessed_type = (content_type or mimetypes.guess_type(resolved_file_name)[0] or 'application/octet-stream').strip()
+    fallback_ext = Path(resolved_file_name).suffix.lower()
+    object_key = _build_object_key(resolved_file_name, sub_dir, fallback_ext)
+
+    with local_path.open('rb') as fh:
+        payload = fh.read()
+
+    return _upload_bytes_to_oss(payload, content_type=guessed_type, object_key=object_key)
+
+
+def sign_oss_url(raw_url: str | None, expires_seconds: int = 315360000) -> str | None:
+    """为当前 OSS bucket 的对象 URL 生成可下载签名；已带签名或非当前 bucket URL 则原样返回。"""
+    if not isinstance(raw_url, str) or not raw_url.strip():
+        return raw_url
+
+    safe_url = raw_url.strip()
+    parsed = urlparse(safe_url)
+    if not parsed.scheme or not parsed.netloc:
+        return safe_url
+
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    if {'OSSAccessKeyId', 'Expires', 'Signature'}.issubset(query.keys()):
+        return safe_url
+
     try:
-        import oss2
+        oss_key, oss_secret, oss_bucket, oss_endpoint = _load_oss_config()
+    except ValueError:
+        return safe_url
 
-        # 从环境变量读取 OSS 配置
-        oss_key = os.getenv('OSS_ACCESS_KEY_ID')
-        oss_secret = os.getenv('OSS_ACCESS_KEY_SECRET')
-        oss_bucket = os.getenv('OSS_BUCKET')
-        oss_endpoint = os.getenv('OSS_ENDPOINT')
+    if parsed.netloc != f'{oss_bucket}.{oss_endpoint}':
+        return safe_url
 
-        if not all([oss_key, oss_secret, oss_bucket, oss_endpoint]):
-            raise ValueError('OSS not configured')
+    object_key = '/'.join(
+        segment for segment in (
+            parsed.path or ''
+        ).split('/') if segment
+    )
+    if not object_key:
+        return safe_url
 
-        auth = oss2.Auth(oss_key, oss_secret)
-        bucket = oss2.Bucket(auth, f"https://{oss_endpoint}", oss_bucket)
-
-        bucket.put_object(object_key, image_buffer, headers={
-            'Content-Type': mime_type,
-            'Cache-Control': 'public, max-age=31536000',
-        })
-
-        # 生成 URL
-        url = f"https://{oss_bucket}.{oss_endpoint}/{object_key}"
-
-        return {
-            'url': url,
-            'objectKey': object_key,
-        }
-    except ImportError:
-        raise ValueError('oss2 library not installed')
-    except Exception as e:
-        raise ValueError(f'Failed to upload to OSS: {e}')
+    return _build_signed_get_url(
+        oss_key,
+        oss_secret,
+        oss_bucket,
+        oss_endpoint,
+        object_key,
+        expires_seconds=expires_seconds,
+    )

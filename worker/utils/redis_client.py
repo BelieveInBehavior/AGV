@@ -30,6 +30,17 @@ def set_task_state(task_id: str, **fields):
     key = f'task:{task_id}'
     r.hset(key, mapping={k: str(v) for k, v in fields.items()})
     r.expire(key, config.TASK_TTL_SECONDS)
+    # 同步冷数据，避免 worker 中断时 Mongo 仍停留在过期状态（如 running）
+    updates = {}
+    for key, value in fields.items():
+        if key == 'progress':
+            try:
+                updates[key] = int(value)
+            except (TypeError, ValueError):
+                updates[key] = value
+        else:
+            updates[key] = value
+    update_task_document(task_id, **updates)
 
 
 def get_task_state(task_id: str) -> dict:

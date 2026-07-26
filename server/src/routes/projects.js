@@ -8,7 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { getDB } from '../utils/db.js';
 import { authMiddleware } from '../utils/jwt.js';
 import { generateLibraryReferenceImage } from '../utils/reference-image-fal.js';
-import { isOssConfigured, uploadImageDataUrlToOss } from '../utils/oss.js';
+import { isOssConfigured, signMediaUrl, uploadImageDataUrlToOss } from '../utils/oss.js';
 
 const router = Router();
 
@@ -40,6 +40,37 @@ async function getUserImageConfig(db, userId) {
   };
 }
 
+function isHttpUrl(value) {
+  return typeof value === 'string' && /^https?:\/\//.test(value.trim());
+}
+
+function sanitizeVideoReferenceAssets(value) {
+  const src = value && typeof value === 'object' ? value : {};
+  const normalize = (items) =>
+    Array.isArray(items)
+      ? items
+        .map((item) => (typeof item === 'string' ? item.trim() : ''))
+        .filter(Boolean)
+      : [];
+  return {
+    videoUrls: normalize(src.videoUrls),
+    audioUrls: normalize(src.audioUrls),
+  };
+}
+
+function validateVideoReferenceAssets(value) {
+  const assets = sanitizeVideoReferenceAssets(value);
+  const invalidVideo = assets.videoUrls.filter((url) => !isHttpUrl(url));
+  if (invalidVideo.length > 0) {
+    throw new Error('videoReferenceAssets.videoUrls 仅支持 http/https URL');
+  }
+  const invalidAudio = assets.audioUrls.filter((url) => !isHttpUrl(url));
+  if (invalidAudio.length > 0) {
+    throw new Error('videoReferenceAssets.audioUrls 仅支持 http/https URL');
+  }
+  return assets;
+}
+
 function sanitizeStoryboardPlanV2(plan) {
   const src = plan && typeof plan === 'object' ? plan : {};
   const normalizeFrame = (frame) => {
@@ -51,6 +82,8 @@ function sanitizeStoryboardPlanV2(plan) {
       characterImageUrls:
         fr.characterImageUrls && typeof fr.characterImageUrls === 'object' ? fr.characterImageUrls : {},
       imageUrl: fr.imageUrl ?? null,
+      continuityImageUrl: fr.continuityImageUrl ?? null,
+      continuitySourceClipId: fr.continuitySourceClipId ?? null,
       imagePromptUsed: typeof fr.imagePromptUsed === 'string' ? fr.imagePromptUsed : undefined,
       imageError: typeof fr.imageError === 'string' ? fr.imageError : undefined,
       status: typeof fr.status === 'string' ? fr.status : undefined,
@@ -64,6 +97,89 @@ function sanitizeStoryboardPlanV2(plan) {
     first_frame: normalizeFrame(src.first_frame),
     last_frame: normalizeFrame(src.last_frame),
     referenceStale: Boolean(src.referenceStale),
+  };
+}
+
+function sanitizeClipVideoReferenceAssets(clip) {
+  if (!clip || typeof clip !== 'object') return { videoUrls: [], audioUrls: [] };
+  return sanitizeVideoReferenceAssets(clip.videoReferenceAssets);
+}
+
+function signUrlValue(value) {
+  return typeof value === 'string' ? signMediaUrl(value) : value ?? null;
+}
+
+function signUrlMap(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).map(([key, url]) => [key, signUrlValue(url)]),
+  );
+}
+
+function signStoryboardFrame(frame) {
+  if (!frame || typeof frame !== 'object') return frame;
+  return {
+    ...frame,
+    imageUrl: signUrlValue(frame.imageUrl),
+    continuityImageUrl: signUrlValue(frame.continuityImageUrl),
+    characterImageUrls: signUrlMap(frame.characterImageUrls),
+  };
+}
+
+function signStoryboardPlan(plan) {
+  if (!plan || typeof plan !== 'object') return plan;
+  return {
+    ...plan,
+    first_frame: signStoryboardFrame(plan.first_frame),
+    last_frame: signStoryboardFrame(plan.last_frame),
+  };
+}
+
+function signPanelMedia(panel) {
+  if (!panel || typeof panel !== 'object') return panel;
+  return {
+    ...panel,
+    imageUrl: signUrlValue(panel.imageUrl),
+    videoUrl: signUrlValue(panel.videoUrl),
+  };
+}
+
+function signClipMedia(clip) {
+  if (!clip || typeof clip !== 'object') return clip;
+  const overrides = clip.referenceOverrides && typeof clip.referenceOverrides === 'object'
+    ? clip.referenceOverrides
+    : null;
+  return {
+    ...clip,
+    videoUrl: signUrlValue(clip.videoUrl),
+    storyboardPlan: signStoryboardPlan(clip.storyboardPlan),
+    panels: Array.isArray(clip.panels) ? clip.panels.map(signPanelMedia) : clip.panels,
+    referenceOverrides: overrides
+      ? {
+        ...overrides,
+        locationImage: signUrlValue(overrides.locationImage),
+        characterImages: signUrlMap(overrides.characterImages),
+      }
+      : overrides,
+  };
+}
+
+function signProjectMedia(project) {
+  if (!project || typeof project !== 'object') return project;
+  return {
+    ...project,
+    characters: Array.isArray(project.characters)
+      ? project.characters.map((character) => ({
+        ...character,
+        referenceImageUrl: signUrlValue(character?.referenceImageUrl),
+      }))
+      : project.characters,
+    locations: Array.isArray(project.locations)
+      ? project.locations.map((location) => ({
+        ...location,
+        referenceImageUrl: signUrlValue(location?.referenceImageUrl),
+      }))
+      : project.locations,
   };
 }
 
@@ -264,7 +380,7 @@ router.patch('/:projectId/references', async (req, res) => {
       await markEpisodeReferenceStale(db, projectId, episodeId);
     }
 
-    res.json({ success: true, project: doc });
+    res.json({ success: true, project: signProjectMedia(doc) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -392,7 +508,11 @@ router.post('/:projectId/references/generate', async (req, res) => {
       await markEpisodeReferenceStale(db, projectId, episodeId);
     }
 
-    res.json({ success: true, project: doc, imageUrl: persistedImageUrl });
+    res.json({
+      success: true,
+      project: signProjectMedia(doc),
+      imageUrl: signUrlValue(persistedImageUrl),
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -403,7 +523,7 @@ router.patch('/:projectId/episodes/:episodeId/clips/:clipId', async (req, res) =
   try {
     const db = getDB();
     const { projectId, episodeId, clipId } = req.params;
-    const { referenceOverrides, beatPrompts } = req.body || {};
+    const { referenceOverrides, beatPrompts, videoReferenceAssets } = req.body || {};
 
     const project = await db
       .collection('projects')
@@ -471,6 +591,13 @@ router.patch('/:projectId/episodes/:episodeId/clips/:clipId', async (req, res) =
       $set.storyboardPlan = nextPlan;
     }
 
+    if (videoReferenceAssets !== undefined) {
+      $set.videoReferenceAssets =
+        videoReferenceAssets === null
+          ? { videoUrls: [], audioUrls: [] }
+          : validateVideoReferenceAssets(videoReferenceAssets);
+    }
+
     await db.collection('clips').updateOne({ clipId, projectId, episodeId }, { $set });
 
     if (referenceOverrides !== undefined) {
@@ -484,9 +611,18 @@ router.patch('/:projectId/episodes/:episodeId/clips/:clipId', async (req, res) =
       .toArray();
     const fresh = await db.collection('clips').findOne({ clipId });
 
-    res.json({ success: true, clip: { ...fresh, panels } });
+    res.json({
+      success: true,
+      clip: signClipMedia({
+        ...fresh,
+        panels,
+        videoReferenceAssets: sanitizeClipVideoReferenceAssets(fresh),
+      }),
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    const message = error?.message || '保存失败';
+    const status = message.includes('videoReferenceAssets.') ? 400 : 500;
+    res.status(status).json({ success: false, message });
   }
 });
 
@@ -500,7 +636,7 @@ router.get('/:projectId', async (req, res) => {
 
     if (!project) return res.status(404).json({ success: false, message: '项目不存在' });
 
-    res.json({ success: true, project });
+    res.json({ success: true, project: signProjectMedia(project) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -524,7 +660,7 @@ router.patch('/:projectId', async (req, res) => {
     );
 
     if (!result) return res.status(404).json({ success: false, message: '项目不存在' });
-    res.json({ success: true, project: result });
+    res.json({ success: true, project: signProjectMedia(result) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -625,11 +761,15 @@ router.get('/:projectId/episodes/:episodeId/clips', async (req, res) => {
           .find({ clipId: clip.clipId, isActive: { $ne: false } })
           .sort({ panelIndex: 1 })
           .toArray();
-        return { ...clip, panels };
+        return {
+          ...clip,
+          panels,
+          videoReferenceAssets: sanitizeClipVideoReferenceAssets(clip),
+        };
       })
     );
 
-    res.json({ success: true, clips: clipsWithPanels });
+    res.json({ success: true, clips: clipsWithPanels.map(signClipMedia) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

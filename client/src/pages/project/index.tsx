@@ -10,6 +10,7 @@ import {
   generateStoryboard,
   generateImages,
   generateVideos,
+  editVideos,
   evaluateEpisode,
   getTask,
   listTasks,
@@ -26,28 +27,31 @@ import {
 } from './EpisodeEvaluationPanel';
 import {
   hasBeatStoryboardContent,
-  resolveBeatFrames,
+  resolveVideoFirstFrameRef,
   storyboardPlanForDisplay,
 } from './beatPlanHelpers';
-import { sceneRefReady } from './visualRefHelpers';
+import { effectiveCharacterRefUrl, sceneRefReady } from './visualRefHelpers';
 
-type Stage = 'input' | 'clips' | 'prompts' | 'images' | 'video';
+type Stage = 'input' | 'clips' | 'prompts' | 'video' | 'editing';
 type EvaluationScope = 'story_analysis' | 'beat_frames' | 'all';
 
 function scopesToModalScope(scopes: ('story_analysis' | 'beat_frames')[]): EvaluationScope {
   return scopes.length >= 2 ? 'all' : scopes[0];
 }
 
-const STAGE_ORDER: Stage[] = ['input', 'clips', 'prompts', 'images', 'video'];
+const STAGE_ORDER: Stage[] = ['input', 'clips', 'prompts', 'video', 'editing'];
 
 function defaultStageForEpisode(ep: Episode | null): Stage {
   if (!ep) return 'input';
   switch (ep.status) {
+    case 'edited':
+    case 'editing':
+      return 'editing';
     case 'video_ready':
     case 'complete':
       return 'video';
     case 'images_ready':
-      return 'images';
+      return 'prompts';
     case 'beat_prompts_ready':
     case 'storyboard_ready':
       return 'prompts';
@@ -58,51 +62,6 @@ function defaultStageForEpisode(ep: Episode | null): Stage {
     default:
       return 'input';
   }
-}
-
-function buildGalleryItems(clips: Clip[]): {
-  key: string;
-  imageUrl: string | null;
-  caption: string;
-  panelId?: string;
-}[] {
-  const items: { key: string; imageUrl: string | null; caption: string; panelId?: string }[] = [];
-  for (const clip of clips) {
-    for (const p of clip.panels || []) {
-      items.push({
-        key: p.panelId,
-        panelId: p.panelId,
-        imageUrl: p.imageUrl,
-        caption: p.description,
-      });
-    }
-    const p = clip.storyboardPlan;
-    if (!p) continue;
-    const { first_frame: ff, last_frame: lf } = resolveBeatFrames(p);
-    if (ff) {
-      items.push({
-        key: `${clip.clipId}-v2-first`,
-        imageUrl: ff.imageUrl ?? null,
-        caption: `情节 ${clip.clipIndex + 1} · 首帧 — ${ff.description ?? ''}`,
-      });
-      items.push({
-        key: `${clip.clipId}-v2-last`,
-        imageUrl: lf?.imageUrl ?? null,
-        caption: `情节 ${clip.clipIndex + 1} · 末帧 — ${lf?.description ?? ''}`,
-      });
-    }
-  }
-  return items;
-}
-
-/** 首尾帧链路：选中方案首末帧是否都已出图 */
-function beatImagesComplete(clips: Clip[]): boolean {
-  const withPlan = clips.filter((c) => hasBeatStoryboardContent(c.storyboardPlan ?? undefined));
-  if (withPlan.length === 0) return false;
-  return withPlan.every((clip) => {
-    const { first_frame: ff, last_frame: lf } = resolveBeatFrames(clip.storyboardPlan);
-    return Boolean(ff?.imageUrl && lf?.imageUrl);
-  });
 }
 
 /** 步骤条是否可进入该阶段（已生成数据或剧集状态已推进） */
@@ -132,17 +91,57 @@ function stageUnlocked(target: Stage, ep: Episode | null, clips: Clip[]): boolea
       ].includes(st)
     );
   }
-  if (target === 'images') {
-    return ['images_ready', 'video_ready', 'complete'].includes(st) || hasPlan;
-  }
   if (target === 'video') {
     return (
-      ['video_ready', 'complete'].includes(st) ||
-      beatImagesComplete(clips) ||
+      ['video_ready', 'edited', 'complete'].includes(st) ||
+      hasPlan ||
       clips.some((c) => Boolean(c.videoUrl))
     );
   }
+  if (target === 'editing') {
+    return (
+      ['editing', 'edited', 'complete'].includes(st) ||
+      clips.some((c) => Boolean(c.editedVideoUrl))
+    );
+  }
   return false;
+}
+
+function isHttpUrl(value: string | null | undefined): boolean {
+  return Boolean(value && /^https?:\/\//.test(value.trim()));
+}
+
+function isSupportedImageRef(value: string | null | undefined): boolean {
+  if (!value) return false;
+  const safe = value.trim();
+  return /^https?:\/\//.test(safe) || safe.startsWith('data:image/');
+}
+
+function clipReadyForArkVideo(project: Project, clip: Clip): boolean {
+  if (!hasBeatStoryboardContent(clip.storyboardPlan ?? undefined)) return true;
+  if (!isSupportedImageRef(resolveVideoFirstFrameRef(clip.storyboardPlan?.first_frame))) return false;
+  if (!(clip.storyboardPlan?.video_prompt || '').trim()) return false;
+  if (clip.characters.some((name) => !isSupportedImageRef(effectiveCharacterRefUrl(project, clip, name)))) return false;
+  const refs = clip.videoReferenceAssets || {};
+  if ((refs.videoUrls || []).some((url) => !isHttpUrl(url))) return false;
+  if ((refs.audioUrls || []).some((url) => !isHttpUrl(url))) return false;
+  return true;
+}
+
+function collectArkVideoBlockers(project: Project, clips: Clip[]): string[] {
+  return clips
+    .filter((clip) => hasBeatStoryboardContent(clip.storyboardPlan ?? undefined))
+    .flatMap((clip) => {
+      const issues: string[] = [];
+      if (!isSupportedImageRef(resolveVideoFirstFrameRef(clip.storyboardPlan?.first_frame))) issues.push(`情节 ${clip.clipIndex + 1} 缺首帧图片`);
+      if (!(clip.storyboardPlan?.video_prompt || '').trim()) issues.push(`情节 ${clip.clipIndex + 1} 缺视频 Prompt`);
+      const missingChars = clip.characters.filter((name) => !isSupportedImageRef(effectiveCharacterRefUrl(project, clip, name)));
+      if (missingChars.length > 0) issues.push(`情节 ${clip.clipIndex + 1} 缺角色参考图：${missingChars.join('、')}`);
+      const refs = clip.videoReferenceAssets || {};
+      if ((refs.videoUrls || []).some((url) => !isHttpUrl(url))) issues.push(`情节 ${clip.clipIndex + 1} 存在非法参考视频 URL`);
+      if ((refs.audioUrls || []).some((url) => !isHttpUrl(url))) issues.push(`情节 ${clip.clipIndex + 1} 存在非法参考音频 URL`);
+      return issues;
+    });
 }
 
 function isTerminalTaskStatus(s: Task['status']): boolean {
@@ -170,6 +169,9 @@ export default function ProjectPage() {
   const [storyboardMode, setStoryboardMode] = useState<StoryboardMode>('auto');
   const [showClassicStoryboard, setShowClassicStoryboard] = useState(false);
   const [error, setError] = useState('');
+  const [editStrategy, setEditStrategy] = useState<'individual' | 'compile'>('compile');
+  const [removeVocals, setRemoveVocals] = useState(false);
+  const [editTransition, setEditTransition] = useState(0.5);
   const [evaluationModal, setEvaluationModal] = useState<{ open: boolean; scope: EvaluationScope }>({
     open: false,
     scope: 'all',
@@ -396,7 +398,7 @@ export default function ProjectPage() {
     }
   };
 
-  // 主流程：首尾帧 Prompt
+  // 主流程：视频 Prompt
   const handleGenerateBeatPrompts = async () => {
     if (!projectId || !activeEpisode) return;
     setError('');
@@ -449,21 +451,41 @@ export default function ProjectPage() {
     try {
       const taskId = await generateImages(projectId, activeEpisode.episodeId, panelIds);
       addTask(taskId, 'IMAGE_GENERATION', activeEpisode.episodeId);
-      setStage('images');
+      setStage('prompts');
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '生成失败');
     }
   };
 
-  const handleGenerateVideos = async () => {
+  const handleGenerateVideos = async (clipIds?: string[]) => {
     if (!projectId || !activeEpisode) return;
     setError('');
     try {
-      const taskId = await generateVideos(projectId, activeEpisode.episodeId);
+      const taskId = await generateVideos(projectId, activeEpisode.episodeId, clipIds);
       addTask(taskId, 'VIDEO_GENERATION', activeEpisode.episodeId);
       setStage('video');
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '生成失败');
+    }
+  };
+
+  const handleEditVideos = async () => {
+    if (!projectId || !activeEpisode) return;
+    setError('');
+    const clipIds = readyBeatVideoClipIds.length > 0 ? readyBeatVideoClipIds : undefined;
+    try {
+      const taskId = await editVideos(projectId, activeEpisode.episodeId, {
+        clipIds,
+        editOptions: {
+          strategy: editStrategy,
+          removeVocals: removeVocals ? 'soft' : false,
+          transitionDuration: editTransition,
+        },
+      });
+      addTask(taskId, 'VIDEO_EDITING', activeEpisode.episodeId);
+      setStage('editing');
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : '剪辑失败');
     }
   };
 
@@ -499,8 +521,16 @@ export default function ProjectPage() {
 
   const allPanels = clips.flatMap((c) => c.panels || []);
   const hasBeatStoryboard = clips.some((c) => hasBeatStoryboardContent(c.storyboardPlan ?? undefined));
-  const galleryItems = buildGalleryItems(clips);
+  const arkVideoBlockers = project ? collectArkVideoBlockers(project, clips) : [];
+  const readyBeatVideoClipIds = project
+    ? clips
+      .filter((c) => hasBeatStoryboardContent(c.storyboardPlan ?? undefined))
+      .filter((clip) => clipReadyForArkVideo(project, clip))
+      .map((clip) => clip.clipId)
+    : [];
+  const hasReadyBeatVideoClips = readyBeatVideoClipIds.length > 0;
   const hasStoryboardVisualPlan = allPanels.length > 0 || hasBeatStoryboard;
+  const hasEditReadyClips = clips.some((c) => Boolean(c.videoUrl));
   const clipsEvalScope: EvaluationScope = 'story_analysis';
   const promptsEvalScope: EvaluationScope = hasEvaluationForScope(activeEpisode?.evaluation, 'all')
     ? 'all'
@@ -554,9 +584,9 @@ export default function ProjectPage() {
                   {
                     input: '输入文本',
                     clips: '情节分析',
-                    prompts: '首尾帧 Prompt',
-                    images: '首尾帧图片',
-                    video: '生成视频',
+                    prompts: '视频 Prompt',
+                    video: '视频预览',
+                    editing: '视频剪辑',
                   }[s]
                 }
               </span>
@@ -573,10 +603,11 @@ export default function ProjectPage() {
               {
                 {
                   STORY_ANALYSIS: '故事分析',
-                  BEAT_PROMPT_GEN: '首尾帧 Prompt',
+                  BEAT_PROMPT_GEN: '视频 Prompt',
                   STORYBOARD_GEN: '经典分镜',
                   IMAGE_GENERATION: '图片生成',
                   VIDEO_GENERATION: '视频生成',
+                  VIDEO_EDITING: '视频剪辑',
                   EPISODE_EVALUATION: '质量评估',
                 }[t.type]
               }
@@ -629,7 +660,7 @@ export default function ProjectPage() {
                     onClick={handleGenerateBeatPrompts}
                     disabled={runningTasks.length > 0}
                   >
-                    {runningTasks.length > 0 ? '生成中...' : '📝 生成首尾帧 Prompt'}
+                    {runningTasks.length > 0 ? '生成中...' : '📝 生成视频 Prompt'}
                   </button>
                 )}
                 {clips.length > 0 && (
@@ -648,7 +679,7 @@ export default function ProjectPage() {
                 />
                 {hasStoryboardVisualPlan && (
                   <button type="button" className="btn-ghost" onClick={() => goToStage('prompts')}>
-                    查看首尾帧 Prompt →
+                    查看视频 Prompt →
                   </button>
                 )}
               </div>
@@ -754,20 +785,20 @@ export default function ProjectPage() {
           </div>
         )}
 
-        {/* ── 阶段3: 首尾帧 Prompt（LLM 文案，尚未生图）── */}
+        {/* ── 阶段3: 视频 Prompt（LLM 文案 + 直接生视频）── */}
         {stage === 'prompts' && (
           <div className="stage-panel">
             <div className="stage-header">
-              <h2>首尾帧 Prompt</h2>
+              <h2>视频 Prompt</h2>
               <div className="header-actions">
                 <button className="btn-ghost" onClick={() => goToStage('clips')}>← 返回情节</button>
-                {hasStoryboardVisualPlan && (
+                {hasBeatStoryboard && (
                   <button
                     className="btn-primary"
-                    onClick={() => handleGenerateImages()}
-                    disabled={runningTasks.length > 0}
+                    onClick={() => handleGenerateVideos(readyBeatVideoClipIds)}
+                    disabled={runningTasks.length > 0 || !hasReadyBeatVideoClips}
                   >
-                    {runningTasks.length > 0 ? '生成中...' : '🖼️ 生成首尾帧图片'}
+                    {runningTasks.length > 0 ? '生成中...' : '🎬 生成视频'}
                   </button>
                 )}
                 {hasBeatStoryboard && (
@@ -776,7 +807,7 @@ export default function ProjectPage() {
                     onClick={() => handleEvaluate(['beat_frames'])}
                     disabled={runningTasks.length > 0}
                   >
-                    🔍 评估首尾帧
+                    🔍 评估视频 Prompt
                   </button>
                 )}
                 {clips.length > 0 && hasBeatStoryboard && (
@@ -796,16 +827,23 @@ export default function ProjectPage() {
               </div>
             </div>
             <p className="stage-hint">
-              视觉资产库中，<strong>角色形象参考图必须为竖屏 {CHARACTER_REFERENCE_RATIO}</strong>（AI 生成与本地上传均遵守）；场景参考图比例跟随项目视频设置。
+              视觉资产库中，<strong>角色形象参考图必须为竖屏 {CHARACTER_REFERENCE_RATIO}</strong>（AI 生成与本地上传均遵守）；场景参考图比例跟随项目视频设置。当前流程会保留首帧 Prompt 和首帧图片生成，并直接使用首帧图、视频 Prompt 与参考图生成视频，不再单独走尾帧 Prompt。
             </p>
+            {hasBeatStoryboard && arkVideoBlockers.length > 0 ? (
+              <p className="empty-hint">
+                {hasReadyBeatVideoClips
+                  ? `可先生成已就绪情节；未就绪项示例：${arkVideoBlockers[0]}`
+                  : (arkVideoBlockers[0] || '请先补齐首帧图片、角色参考图和合法参考素材 URL，再生成视频。')}
+              </p>
+            ) : null}
 
             {runningTasks.length > 0 && !hasStoryboardVisualPlan ? (
               <div className="analyzing-state">
                 <div className="spinner" />
-                <p>AI 正在生成首尾帧结构化 Prompt…</p>
+                <p>AI 正在生成视频结构化 Prompt…</p>
               </div>
             ) : !hasStoryboardVisualPlan ? (
-              <p className="empty-hint">请先在情节页点击「生成首尾帧 Prompt」或使用高级经典分镜</p>
+              <p className="empty-hint">请先在情节页点击「生成视频 Prompt」或使用高级经典分镜</p>
             ) : (
               <div className="storyboard-grid prompts-stage-layout">
                 {project && (project.characters.length > 0 || project.locations.length > 0) ? (
@@ -831,7 +869,7 @@ export default function ProjectPage() {
                       <div key={clip.clipId} className="clip-section beat-section">
                         <h3 className="clip-section-title">
                           情节 {clip.clipIndex + 1}: {clip.summary}
-                          <span className="beat-badge">首尾帧</span>
+                          <span className="beat-badge">视频链路</span>
                           {clip.duration && (
                             <span className="clip-duration">⏱ {clip.duration}s</span>
                           )}
@@ -845,6 +883,7 @@ export default function ProjectPage() {
                           disabled={runningTasks.length > 0}
                           onClipUpdated={mergeClipIntoState}
                           onTaskCreated={(taskId, type) => addTask(taskId, type, activeEpisode.episodeId)}
+                          onGenerateVideo={(clipId) => handleGenerateVideos([clipId])}
                           onError={(msg) => setError(msg)}
                         />
                       </div>
@@ -897,83 +936,33 @@ export default function ProjectPage() {
           </div>
         )}
 
-        {/* ── 阶段4: 首尾帧图片画廊 ── */}
-        {stage === 'images' && (
-          <div className="stage-panel">
-            <div className="stage-header">
-              <h2>首尾帧图片</h2>
-              <div className="header-actions">
-                <button className="btn-ghost" onClick={() => goToStage('prompts')}>← 返回 Prompt</button>
-                <button
-                  className="btn-primary"
-                  onClick={() => handleGenerateImages()}
-                  disabled={runningTasks.length > 0}
-                >
-                  {runningTasks.length > 0 ? '生成中...' : '🔄 重新生成全部图片'}
-                </button>
-                {hasBeatStoryboard && beatImagesComplete(clips) && (
-                  <button
-                    className="btn-primary"
-                    onClick={handleGenerateVideos}
-                    disabled={runningTasks.length > 0}
-                  >
-                    {runningTasks.length > 0 ? '…' : '🎬 生成视频'}
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="image-gallery">
-              {galleryItems.map((item) => (
-                <div key={item.key} className={`gallery-item ${item.imageUrl ? 'has-image' : ''}`}>
-                  {item.imageUrl ? (
-                    <img src={item.imageUrl} alt={item.caption} className="gallery-img" />
-                  ) : (
-                    <div className="gallery-placeholder">
-                      {runningTasks.length > 0 ? (
-                        <div className="spinner-sm" />
-                      ) : (
-                        <span>待生成</span>
-                      )}
-                    </div>
-                  )}
-                  <div className="gallery-caption">{item.caption.slice(0, 80)}</div>
-                  {!item.imageUrl && item.panelId && (
-                    <button
-                      type="button"
-                      className="btn-gen-img gallery-one-btn"
-                      onClick={() => handleGenerateImages([item.panelId!])}
-                      disabled={runningTasks.length > 0}
-                    >
-                      生成
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* ── 阶段5: 视频 ── */}
+        {/* ── 阶段4: 视频 ── */}
         {stage === 'video' && (
           <div className="stage-panel">
             <div className="stage-header">
               <h2>视频预览</h2>
               <div className="header-actions">
-                <button className="btn-ghost" onClick={() => goToStage('images')}>← 返回图片</button>
+                <button className="btn-ghost" onClick={() => goToStage('prompts')}>← 返回 Prompt</button>
                 <button
                   type="button"
                   className="btn-primary"
-                  onClick={handleGenerateVideos}
-                  disabled={runningTasks.length > 0 || !beatImagesComplete(clips)}
+                  onClick={() => handleGenerateVideos(readyBeatVideoClipIds)}
+                  disabled={runningTasks.length > 0 || !hasReadyBeatVideoClips}
                 >
                   {runningTasks.length > 0 ? '生成中...' : '🔄 重新生成视频'}
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => handleEditVideos()}
+                  disabled={runningTasks.length > 0 || !hasEditReadyClips}
+                >
+                  {runningTasks.length > 0 ? '剪辑中...' : '✂️ 视频剪辑'}
                 </button>
               </div>
             </div>
             <p className="stage-hint">
-              使用当前方案的首尾帧图与节拍/运动描述请求视频接口（`VIDEO_API_BASE_URL` 等，或账号 AI
-              设置）。未配置成功时会写入短占位视频以便联调。
+              使用当前方案的首帧图（由首帧 Prompt 生成）、视频 Prompt 与项目/情节参考图向 Ark 提交视频任务；顶部按钮会按当前已就绪情节提交生成。
             </p>
             <div className="video-clip-list">
               {clips.map((clip) =>
@@ -990,9 +979,102 @@ export default function ProjectPage() {
             </div>
             {!clips.some((c) => c.videoUrl) && runningTasks.length === 0 ? (
               <p className="empty-hint">
-                暂无视频。请先到「首尾帧图片」页完成出图，再点击「生成视频」。
+                {hasReadyBeatVideoClips
+                  ? '暂无视频。当前已有可生成情节，点击「生成视频」即可。'
+                  : '暂无视频。请先生成首帧图片，再点击「生成视频」。'}
               </p>
             ) : null}
+          </div>
+        )}
+
+        {/* ── 阶段5: 视频剪辑 ── */}
+        {stage === 'editing' && (
+          <div className="stage-panel">
+            <div className="stage-header">
+              <h2>视频剪辑与后处理</h2>
+              <div className="header-actions">
+                <button className="btn-ghost" onClick={() => goToStage('video')}>← 返回预览</button>
+              </div>
+            </div>
+            <p className="stage-hint">
+              对已生成的视频进行后处理：支持单独编辑各情节或全集拼接。可选功能包括去人声、过渡特效等。
+            </p>
+            <div className="edit-options-panel">
+              <div className="edit-option-row">
+                <label className="edit-label">
+                  剪辑策略
+                  <select
+                    className="edit-select"
+                    value={editStrategy}
+                    onChange={(e) => setEditStrategy(e.target.value as 'individual' | 'compile')}
+                    disabled={runningTasks.length > 0}
+                  >
+                    <option value="individual">单独编辑各情节</option>
+                    <option value="compile">全集拼接（推荐）</option>
+                  </select>
+                </label>
+              </div>
+              <div className="edit-option-row">
+                <label className="edit-label">
+                  <input
+                    type="checkbox"
+                    checked={removeVocals}
+                    onChange={(e) => setRemoveVocals(e.target.checked)}
+                    disabled={runningTasks.length > 0}
+                  />
+                  {' '}去人声处理（保留背景音乐）
+                </label>
+              </div>
+              {editStrategy === 'compile' && (
+                <div className="edit-option-row">
+                  <label className="edit-label">
+                    过渡时长（秒）
+                    <input
+                      type="number"
+                      min="0.1"
+                      max="2"
+                      step="0.1"
+                      value={editTransition}
+                      onChange={(e) => setEditTransition(parseFloat(e.target.value))}
+                      disabled={runningTasks.length > 0}
+                      className="edit-number-input"
+                    />
+                  </label>
+                </div>
+              )}
+              <div className="edit-actions">
+                <button
+                  className="btn-primary btn-large"
+                  onClick={handleEditVideos}
+                  disabled={runningTasks.length > 0 || !hasEditReadyClips}
+                >
+                  {runningTasks.length > 0 ? '处理中...' : '✂️ 开始剪辑'}
+                </button>
+              </div>
+            </div>
+
+            <div className="edited-video-list">
+              <h3>已剪辑视频</h3>
+              {clips.some((c) => c.editedVideoUrl) ? (
+                clips.map((clip) =>
+                  clip.editedVideoUrl ? (
+                    <div key={clip.clipId} className="edited-video-card">
+                      <h4 className="video-clip-title">
+                        情节 {clip.clipIndex + 1} · {clip.summary.slice(0, 40)}
+                        {clip.duration && <span className="clip-duration">⏱ {clip.duration}s</span>}
+                      </h4>
+                      <video src={clip.editedVideoUrl} controls className="clip-video" playsInline />
+                    </div>
+                  ) : null,
+                )
+              ) : (
+                <p className="empty-hint">
+                  {hasEditReadyClips
+                    ? '暂无已剪辑视频。点击「开始剪辑」即可处理。'
+                    : '暂无可编辑视频。请先生成视频。'}
+                </p>
+              )}
+            </div>
           </div>
         )}
       </div>

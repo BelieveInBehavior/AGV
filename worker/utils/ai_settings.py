@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import os
 from typing import Any
 
 import config
@@ -52,6 +53,8 @@ def get_default_ai_settings() -> dict[str, Any]:
             'baseUrl': (config.VIDEO_API_BASE_URL or '').strip().rstrip('/') or '',
             'apiKey': config.VIDEO_API_KEY or '',
             'model': config.VIDEO_MODEL or '',
+            'resolution': (config.VIDEO_RESOLUTION or '480p').strip(),
+            'generateAudio': os.getenv('VIDEO_GENERATE_AUDIO', '').lower() in ('1', 'true', 'yes'),
         },
     }
 
@@ -108,6 +111,11 @@ def _merge_video(doc: dict | None, base: dict) -> dict:
         out['apiKey'] = str(doc['videoApiKey']).strip()
     if doc.get('videoModel'):
         out['model'] = str(doc['videoModel']).strip()
+    if doc.get('videoResolution'):
+        out['resolution'] = str(doc['videoResolution']).strip()
+    if doc.get('videoGenerateAudio') is not None:
+        v = doc['videoGenerateAudio']
+        out['generateAudio'] = bool(v) if not isinstance(v, str) else v.lower() in ('1', 'true', 'yes')
     return out
 
 

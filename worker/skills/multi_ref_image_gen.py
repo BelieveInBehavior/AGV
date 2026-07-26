@@ -32,7 +32,10 @@ def _openai_post_json(
     import httpx
 
     root = (base_url or config.IMAGE_BASE_URL or config.LLM_BASE_URL or 'https://api.openai.com/v1').strip().rstrip('/')
-    timeout_seconds = max(5.0, float(getattr(config, 'IMAGE_REQUEST_TIMEOUT_SECONDS', 60) or 60))
+    configured_timeout = float(getattr(config, 'IMAGE_REQUEST_TIMEOUT_SECONDS', 60) or 60)
+    is_openrouter = 'openrouter' in root.lower()
+    # OpenRouter 图片生成经常明显慢于普通聊天请求，60s 容易误判为失败
+    timeout_seconds = max(5.0, configured_timeout, 180.0 if is_openrouter else 60.0)
     headers = {
         'Authorization': f'Bearer {api_key}',
         'Content-Type': 'application/json',

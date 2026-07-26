@@ -567,6 +567,7 @@ button.stage-step.stage-step-nav.locked {
 }
 .beat-pair-row { gap: 20px; }
 .beat-frame-card { max-width: 260px; }
+.beat-first-frame-card { margin-top: 12px; }
 .beat-badge, .multi-badge {
   margin-left: 10px;
   font-size: 10px;
@@ -851,6 +852,64 @@ button.stage-step.stage-step-nav.locked {
 .beat-prompt-collapsed { max-height: 72px; margin: 0; }
 .beat-char-edit-block { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
 .beat-char-edit-label { font-size: 10px; color: #6b7aaf; }
+.beat-video-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.beat-video-ref-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.beat-video-ref-label {
+  font-size: 11px;
+  color: #9ca7d3;
+}
+.beat-video-ref-textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #2a3254;
+  background: #0a0e1a;
+  color: #c5cee8;
+  font-size: 11px;
+  line-height: 1.45;
+  resize: vertical;
+  min-height: 72px;
+  font-family: ui-monospace, monospace;
+}
+.beat-inline-video {
+  width: 100%;
+  min-height: 220px;
+}
+.beat-video-placeholder {
+  min-height: 220px;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  border: 1px dashed #2a3254;
+  border-radius: 10px;
+  background: #0a0e1a;
+  color: #9ca7d3;
+  text-align: center;
+}
+.beat-video-placeholder p {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #6b7aaf;
+}
+.beat-video-generate-btn {
+  width: 100%;
+}
+.beat-video-note,
+.beat-first-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #7d88b5;
+}
 .beat-char-edit-row {
   display: grid;
   grid-template-columns: 72px 1fr 1fr;

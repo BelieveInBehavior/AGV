@@ -104,11 +104,15 @@ def generate_storyboard(
         beat_clip_count = 0
         panel_clip_count = 0
 
+        previous_beat_clip = None
+        previous_beat_plan = None
         for i, clip in enumerate(clips):
             pct = 5 + int((i + 1) / len(clips) * 88)
             use_panels = _use_multi_panel(clip, mode)
 
             if use_panels:
+                previous_beat_clip = None
+                previous_beat_plan = None
                 publish_progress(
                     task_id, pct,
                     f"多分镜 {i + 1}/{len(clips)}: {clip.get('summary', '')[:30]}...",
@@ -212,14 +216,17 @@ def generate_storyboard(
                     f"首尾帧 {i + 1}/{len(clips)}: {clip.get('summary', '')[:30]}...",
                     'generating_beat_frames',
                 )
-                apply_beat_frame_plan_for_clip(
+                previous_beat_plan = apply_beat_frame_plan_for_clip(
                     db, now, episode_id, project_id, clip,
                     characters=characters,
                     locations=locations,
                     art_style=art_style,
                     language=language,
                     ai_settings=ai_settings,
+                    previous_clip=previous_beat_clip,
+                    previous_storyboard_plan=previous_beat_plan,
                 )
+                previous_beat_clip = {**clip, 'storyboardPlan': previous_beat_plan}
                 beat_clip_count += 1
 
         ep_status = 'storyboard_ready' if panel_clip_count > 0 else 'beat_prompts_ready'

@@ -182,6 +182,31 @@ def _target_duration_sec(clip: dict) -> int:
     return max(1, min(15, value))
 
 
+def _frame_context_text(frame: dict | None) -> str:
+    if not isinstance(frame, dict):
+        return ''
+    parts: list[str] = []
+    desc = (frame.get('description') or '').strip()
+    scene_prompt = (frame.get('scene_prompt') or frame.get('scenePrompt') or '').strip()
+    if desc:
+        parts.append(f'画面说明：{desc}')
+    if scene_prompt:
+        parts.append(f'生图Prompt：{scene_prompt}')
+    chars = []
+    for ch in frame.get('characters') or []:
+        if not isinstance(ch, dict):
+            continue
+        name = (ch.get('name') or '').strip()
+        if not name:
+            continue
+        outfit = (ch.get('outfit') or '').strip()
+        emotion = (ch.get('emotion') or '').strip()
+        chars.append(f'{name}（衣着：{outfit}；状态：{emotion}）')
+    if chars:
+        parts.append('入镜角色状态：' + '；'.join(chars))
+    return '\n'.join(parts)
+
+
 def generate_beat_frames_skill(
     clip: dict,
     characters: list,
@@ -189,6 +214,8 @@ def generate_beat_frames_skill(
     art_style: str = 'cinematic realistic',
     language: str = 'zh',
     ai_settings: dict[str, Any] | None = None,
+    previous_clip: dict | None = None,
+    previous_storyboard_plan: dict | None = None,
 ) -> dict:
     """为单个情节片段生成扁平 storyboardPlan（首尾帧）。"""
     settings = ai_settings or get_default_ai_settings()
@@ -218,6 +245,24 @@ def generate_beat_frames_skill(
         if loc_image_prompt else ''
     )
 
+    previous_plan = previous_storyboard_plan if isinstance(previous_storyboard_plan, dict) else {}
+    if not previous_plan and isinstance(previous_clip, dict):
+        previous_plan = previous_clip.get('storyboardPlan') if isinstance(previous_clip.get('storyboardPlan'), dict) else {}
+    previous_last_context = _frame_context_text(previous_plan.get('last_frame'))
+    previous_section = ''
+    if previous_last_context:
+        prev_summary = (previous_clip or {}).get('summary', '') if isinstance(previous_clip, dict) else ''
+        previous_section = f"""
+
+【上一情节尾帧（用于本段首帧连续性）】
+上一情节摘要：{prev_summary}
+{previous_last_context}
+
+连续性要求：
+- 若本段与上一段处于同一时间/场景/动作链，first_frame 必须承接上一情节尾帧：继承机位方向、画面左右坐标、光线、角色位置、姿态和道具状态，只表现进入本段所需的最小变化。
+- 若本段明确换场、时间跳跃或视角切换，first_frame 可以切镜，但必须在画面状态上合理解释变化，不得无因果瞬移。
+"""
+
     user_prompt = f"""{style_note}
 
 【场景】{loc_ctx}{loc_image_section}
@@ -234,11 +279,13 @@ def generate_beat_frames_skill(
 {clip.get('content', '')}
 
 【情绪基调】{clip.get('mood', '')}
-
+{previous_section}
 【目标视频时长】
 {_target_duration_sec(clip)} 秒
 
 ⚠️ 角色在场规则：上方「本段出场角色」列表中的所有角色均已由上游确认物理在场，不得重新判断、不得省略任何一个。你的任务是为每个角色确定其在首帧和末帧中的具体位置、姿态和状态（如「侧卧于床左侧，双眼轻合」），全部写入 scene_prompt 和 characters 数组。即使情节正文未直接描写某角色的动作，只要其在列表中，就必须出现在画面里。
+
+⚠️ 首尾承接规则：先确定 first_frame 的静态状态，再让 last_frame 成为从 first_frame 出发、经过本段核心动作后抵达的结束状态；last_frame 不得像独立分镜一样另起炉灶，也不得跳到下一段才发生的事件。
 
 请输出首尾帧 JSON。
 - video_prompt 为结构化中文视频 Prompt。

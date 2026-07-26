@@ -7,7 +7,7 @@ import {
   effectiveCharacterRefUrl,
   effectiveLocationRefUrl,
 } from './visualRefHelpers';
-import { resolveBeatFrames } from './beatPlanHelpers';
+import { resolveBeatFrames, resolveVideoFirstFrameRef } from './beatPlanHelpers';
 
 function cloneChars(chars: BeatCharacterPose[] | undefined): BeatCharacterPose[] {
   return (chars || []).map((c) => ({
@@ -15,6 +15,21 @@ function cloneChars(chars: BeatCharacterPose[] | undefined): BeatCharacterPose[]
     outfit: c.outfit || '',
     emotion: c.emotion || '',
   }));
+}
+
+function joinLines(items: string[] | undefined | null): string {
+  return (items || []).join('\n');
+}
+
+function splitLines(value: string): string[] {
+  return value
+    .split('\n')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function isHttpUrl(value: string | null | undefined): boolean {
+  return Boolean(value && /^https?:\/\//.test(value.trim()));
 }
 
 type Props = {
@@ -26,6 +41,7 @@ type Props = {
   disabled: boolean;
   onClipUpdated: (c: Clip) => void;
   onTaskCreated: (taskId: string, type: 'IMAGE_GENERATION') => void;
+  onGenerateVideo: (clipId: string) => Promise<void> | void;
   onError: (msg: string) => void;
 };
 
@@ -38,38 +54,49 @@ export function BeatKeyframeEditor({
   disabled,
   onClipUpdated,
   onTaskCreated,
+  onGenerateVideo,
   onError,
 }: Props) {
   const { first_frame: ff, last_frame: lf } = resolveBeatFrames(plan);
+  const videoFirstFrameRef = resolveVideoFirstFrameRef(ff);
+  const usingContinuityFrame = Boolean(ff?.continuityImageUrl && ff.continuityImageUrl === videoFirstFrameRef);
 
   const [videoPrompt, setVideoPrompt] = useState(plan.video_prompt || '');
   const [firstScene, setFirstScene] = useState(ff?.scene_prompt || '');
-  const [lastScene, setLastScene] = useState(lf?.scene_prompt || '');
   const [firstChars, setFirstChars] = useState<BeatCharacterPose[]>(() => cloneChars(ff?.characters));
-  const [lastChars, setLastChars] = useState<BeatCharacterPose[]>(() => cloneChars(lf?.characters));
+  const [videoRefUrlsText, setVideoRefUrlsText] = useState(joinLines(clip.videoReferenceAssets?.videoUrls));
+  const [audioRefUrlsText, setAudioRefUrlsText] = useState(joinLines(clip.videoReferenceAssets?.audioUrls));
   const [openFirst, setOpenFirst] = useState(false);
-  const [openLast, setOpenLast] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [generatingSlot, setGeneratingSlot] = useState<'first_frame' | 'last_frame' | null>(null);
+  const [generatingFirstFrame, setGeneratingFirstFrame] = useState(false);
+  const [generatingVideo, setGeneratingVideo] = useState(false);
   const locFileRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    const { first_frame: f, last_frame: l } = resolveBeatFrames(plan);
+    const { first_frame: f } = resolveBeatFrames(plan);
     setVideoPrompt(plan.video_prompt || '');
     setFirstScene(f?.scene_prompt || '');
-    setLastScene(l?.scene_prompt || '');
     setFirstChars(cloneChars(f?.characters));
-    setLastChars(cloneChars(l?.characters));
-  }, [clip.clipId, plan]);
+    setVideoRefUrlsText(joinLines(clip.videoReferenceAssets?.videoUrls));
+    setAudioRefUrlsText(joinLines(clip.videoReferenceAssets?.audioUrls));
+  }, [clip.clipId, clip.videoReferenceAssets, plan]);
 
   useEffect(() => {
-    if (!disabled) setGeneratingSlot(null);
+    if (!disabled) setGeneratingFirstFrame(false);
+    if (!disabled) setGeneratingVideo(false);
   }, [disabled]);
 
   const urls = collectClipReferenceUrls(project, clip);
+  const trimmedVideoRefUrls = splitLines(videoRefUrlsText);
+  const trimmedAudioRefUrls = splitLines(audioRefUrlsText);
+  const invalidVideoRefUrls = trimmedVideoRefUrls.filter((url) => !isHttpUrl(url));
+  const invalidAudioRefUrls = trimmedAudioRefUrls.filter((url) => !isHttpUrl(url));
+  const missingCharacterRefs = clip.characters.filter((name) => !isHttpUrl(effectiveCharacterRefUrl(project, clip, name)));
+  const hasBlockingCharacterRefs = missingCharacterRefs.length > 0;
+  const hasInvalidMediaRefs = invalidVideoRefUrls.length > 0 || invalidAudioRefUrls.length > 0;
 
-  const persistPrompts = async () => {
-    const updated = await patchClip(projectId, episodeId, clip.clipId, {
+  const persistEdits = async ({ includeVideoReferenceAssets }: { includeVideoReferenceAssets: boolean }) => {
+    const body: Parameters<typeof patchClip>[3] = {
       beatPrompts: {
         video_prompt: videoPrompt,
         first_frame: {
@@ -77,13 +104,18 @@ export function BeatKeyframeEditor({
           description: ff?.description || '',
           characters: firstChars,
         },
-        last_frame: {
-          scene_prompt: lastScene,
-          description: lf?.description || '',
-          characters: lastChars,
-        },
       },
-    });
+    };
+    if (includeVideoReferenceAssets) {
+      if (hasInvalidMediaRefs) {
+        throw new Error('参考视频/音频 URL 仅支持 http/https');
+      }
+      body.videoReferenceAssets = {
+        videoUrls: trimmedVideoRefUrls,
+        audioUrls: trimmedAudioRefUrls,
+      };
+    }
+    const updated = await patchClip(projectId, episodeId, clip.clipId, body);
     onClipUpdated(updated);
     return updated;
   };
@@ -91,7 +123,7 @@ export function BeatKeyframeEditor({
   const savePrompts = async () => {
     setSaving(true);
     try {
-      await persistPrompts();
+      await persistEdits({ includeVideoReferenceAssets: true });
     } catch (e) {
       onError(e instanceof Error ? e.message : '保存失败');
     } finally {
@@ -99,20 +131,49 @@ export function BeatKeyframeEditor({
     }
   };
 
-  const handleGenerateFrameImage = async (slot: 'first_frame' | 'last_frame') => {
-    const scenePrompt = slot === 'first_frame' ? firstScene : lastScene;
-    if (!scenePrompt.trim()) {
-      onError(slot === 'first_frame' ? '首帧 Prompt 为空，无法生成图片' : '末帧 Prompt 为空，无法生成图片');
+  const handleGenerateVideo = async () => {
+    if (!videoFirstFrameRef) {
+      onError('请先生成首帧图片，再生成视频');
+      return;
+    }
+    if (!videoPrompt.trim() && !firstScene.trim()) {
+      onError('视频 Prompt 与首帧 Prompt 至少填写一项，才能生成视频');
+      return;
+    }
+    if (hasBlockingCharacterRefs) {
+      onError(`请先补齐角色参考图：${missingCharacterRefs.join('、')}`);
+      return;
+    }
+    if (hasInvalidMediaRefs) {
+      onError('参考视频/音频 URL 仅支持 http/https');
       return;
     }
     setSaving(true);
-    setGeneratingSlot(slot);
+    setGeneratingVideo(true);
     try {
-      await persistPrompts();
-      const taskId = await generateBeatFrameImage(projectId, episodeId, clip.clipId, slot);
+      await persistEdits({ includeVideoReferenceAssets: true });
+      await onGenerateVideo(clip.clipId);
+    } catch (e) {
+      setGeneratingVideo(false);
+      onError(e instanceof Error ? e.message : '生成失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleGenerateFirstFrame = async () => {
+    if (!firstScene.trim()) {
+      onError('首帧 Prompt 为空，无法生成图片');
+      return;
+    }
+    setSaving(true);
+    setGeneratingFirstFrame(true);
+    try {
+      await persistEdits({ includeVideoReferenceAssets: false });
+      const taskId = await generateBeatFrameImage(projectId, episodeId, clip.clipId, 'first_frame');
       onTaskCreated(taskId, 'IMAGE_GENERATION');
     } catch (e) {
-      setGeneratingSlot(null);
+      setGeneratingFirstFrame(false);
       onError(e instanceof Error ? e.message : '生成失败');
     } finally {
       setSaving(false);
@@ -189,14 +250,8 @@ export function BeatKeyframeEditor({
     }
   };
 
-  const updateCharRow = (
-    which: 'first' | 'last',
-    index: number,
-    field: keyof BeatCharacterPose,
-    value: string,
-  ) => {
-    const setter = which === 'first' ? setFirstChars : setLastChars;
-    setter((prev) => {
+  const updateFirstCharRow = (index: number, field: keyof BeatCharacterPose, value: string) => {
+    setFirstChars((prev) => {
       const next = [...prev];
       const row = { ...next[index], [field]: value };
       next[index] = row;
@@ -208,12 +263,11 @@ export function BeatKeyframeEditor({
   const hasLocOverride = Boolean((clip.referenceOverrides?.locationImage || '').trim());
 
   const displayFirst = ff;
-  const displayLast = lf;
 
   return (
     <div className="beat-keyframe-editor">
       {plan.referenceStale ? (
-        <p className="beat-ref-stale">参考图已更新：建议重新点击「生成首尾帧 Prompt」以同步描述。</p>
+        <p className="beat-ref-stale">参考图已更新：建议重新点击「生成视频 Prompt」以同步描述。</p>
       ) : null}
 
       {plan.transition_from_prev ? (
@@ -329,59 +383,79 @@ export function BeatKeyframeEditor({
                   placeholder="衣着"
                   value={row.outfit}
                   disabled={disabled}
-                  onChange={(e) => updateCharRow('first', i, 'outfit', e.target.value)}
+                  onChange={(e) => updateFirstCharRow(i, 'outfit', e.target.value)}
                 />
                 <input
                   className="beat-char-input"
                   placeholder="情绪/动作"
                   value={row.emotion}
                   disabled={disabled}
-                  onChange={(e) => updateCharRow('first', i, 'emotion', e.target.value)}
+                  onChange={(e) => updateFirstCharRow(i, 'emotion', e.target.value)}
                 />
               </div>
             ))}
           </div>
         </div>
-        <div className="beat-prompt-slot">
+        <div className="beat-prompt-slot beat-video-slot">
           <div className="beat-prompt-slot-head">
-            <strong>末帧 Prompt（静态生图）</strong>
-            <button type="button" className="btn-ghost btn-tiny" onClick={() => setOpenLast((v) => !v)}>
-              {openLast ? '收起' : '展开编辑'}
-            </button>
+            <strong>视频预览</strong>
           </div>
-          {openLast ? (
-            <textarea
-              className="beat-prompt-textarea"
-              rows={6}
-              value={lastScene}
-              onChange={(e) => setLastScene(e.target.value)}
-              disabled={disabled}
-            />
+          {clip.videoUrl ? (
+            <video src={clip.videoUrl} controls className="clip-video beat-inline-video" playsInline />
           ) : (
-            <pre className="prompt-en-pre beat-prompt-collapsed">{lastScene || '—'}</pre>
+            <div className="beat-video-placeholder">
+              <span>暂无视频</span>
+              <p>当前使用首帧 Prompt、首帧图、视频 Prompt 与参考图直接生成视频，不再单独走尾帧 Prompt 流程。</p>
+            </div>
           )}
-          <div className="beat-char-edit-block">
-            <span className="beat-char-edit-label">角色状态（末帧）</span>
-            {lastChars.map((row, i) => (
-              <div key={`${row.name}-l-${i}`} className="beat-char-edit-row">
-                <span className="beat-char-name">{row.name || '—'}</span>
-                <input
-                  className="beat-char-input"
-                  placeholder="衣着"
-                  value={row.outfit}
-                  disabled={disabled}
-                  onChange={(e) => updateCharRow('last', i, 'outfit', e.target.value)}
-                />
-                <input
-                  className="beat-char-input"
-                  placeholder="情绪/动作"
-                  value={row.emotion}
-                  disabled={disabled}
-                  onChange={(e) => updateCharRow('last', i, 'emotion', e.target.value)}
-                />
-              </div>
-            ))}
+          <div className="beat-video-ref-block">
+            <label className="beat-video-ref-label" htmlFor={`video-refs-${clip.clipId}`}>
+              参考视频 URL（每行一个）
+            </label>
+            <textarea
+              id={`video-refs-${clip.clipId}`}
+              className="beat-video-ref-textarea"
+              rows={3}
+              value={videoRefUrlsText}
+              onChange={(e) => setVideoRefUrlsText(e.target.value)}
+              disabled={disabled}
+              placeholder="https://example.com/reference-video.mp4"
+            />
+            <label className="beat-video-ref-label" htmlFor={`audio-refs-${clip.clipId}`}>
+              参考音频 URL（每行一个）
+            </label>
+            <textarea
+              id={`audio-refs-${clip.clipId}`}
+              className="beat-video-ref-textarea"
+              rows={3}
+              value={audioRefUrlsText}
+              onChange={(e) => setAudioRefUrlsText(e.target.value)}
+              disabled={disabled}
+              placeholder="https://example.com/reference-audio.mp3"
+            />
           </div>
+          <button
+            type="button"
+            className="btn-primary beat-video-generate-btn"
+            disabled={disabled || saving || !videoFirstFrameRef || hasBlockingCharacterRefs || hasInvalidMediaRefs}
+            onClick={() => void handleGenerateVideo()}
+          >
+            {generatingVideo && saving ? '生成中…' : clip.videoUrl ? '重新生成视频' : '生成视频'}
+          </button>
+          {!videoFirstFrameRef ? <p className="beat-video-note">请先生成首帧图片，再生成视频。</p> : null}
+          {usingContinuityFrame ? (
+            <p className="beat-video-note">当前将优先使用上一情节尾部抽帧作为首帧参考，以增强跨情节连续性。</p>
+          ) : null}
+          {hasBlockingCharacterRefs ? (
+            <p className="beat-video-note">缺少角色参考图：{missingCharacterRefs.join('、')}</p>
+          ) : null}
+          {invalidVideoRefUrls.length > 0 ? (
+            <p className="beat-video-note">参考视频 URL 非法：{invalidVideoRefUrls.join('、')}</p>
+          ) : null}
+          {invalidAudioRefUrls.length > 0 ? (
+            <p className="beat-video-note">参考音频 URL 非法：{invalidAudioRefUrls.join('、')}</p>
+          ) : null}
+          {lf?.description ? <p className="beat-video-note">原末帧描述：{lf.description}</p> : null}
         </div>
       </div>
 
@@ -395,49 +469,30 @@ export function BeatKeyframeEditor({
           {saving ? '保存中…' : '保存 Prompt 修改'}
         </button>
       </div>
-
-      <div className="panels-row beat-pair-row">
-        <div className="panel-card beat-frame-card">
-          {ff?.imageUrl ? (
-            <img src={ff.imageUrl} alt="" className="panel-img" />
-          ) : (
-            <div className="panel-placeholder">
-              <span className="shot-label">首帧</span>
-            </div>
-          )}
-          <div className="panel-info">
-            <p className="panel-desc">{ff?.description}</p>
+      <div className="panel-card beat-frame-card beat-first-frame-card">
+        {videoFirstFrameRef ? (
+          <img src={videoFirstFrameRef} alt="" className="panel-img" />
+        ) : (
+          <div className="panel-placeholder">
+            <span className="shot-label">首帧</span>
           </div>
-          <button
-            type="button"
-            className="btn-gen-img"
-            disabled={disabled || saving}
-            onClick={() => void handleGenerateFrameImage('first_frame')}
-          >
-            {generatingSlot === 'first_frame' && saving ? '生成中…' : '生成首帧图片'}
-          </button>
+        )}
+        <div className="panel-info">
+          <p className="panel-desc">{ff?.description || '首帧图片用于给视频一个更稳定的起始视觉锚点。'}</p>
         </div>
-        <div className="panel-card beat-frame-card">
-          {lf?.imageUrl ? (
-            <img src={lf.imageUrl} alt="" className="panel-img" />
-          ) : (
-            <div className="panel-placeholder">
-              <span className="shot-label">末帧</span>
-            </div>
-          )}
-          <div className="panel-info">
-            <p className="panel-desc">{lf?.description}</p>
-          </div>
-          <button
-            type="button"
-            className="btn-gen-img"
-            disabled={disabled || saving}
-            onClick={() => void handleGenerateFrameImage('last_frame')}
-          >
-            {generatingSlot === 'last_frame' && saving ? '生成中…' : '生成末帧图片'}
-          </button>
-        </div>
+        <button
+          type="button"
+          className="btn-gen-img"
+          disabled={disabled || saving}
+          onClick={() => void handleGenerateFirstFrame()}
+        >
+          {generatingFirstFrame && saving ? '生成中…' : ff?.imageUrl ? '重新生成首帧图片' : '生成首帧图片'}
+        </button>
       </div>
+      {usingContinuityFrame && !ff?.imageUrl ? (
+        <p className="beat-first-note">当前展示的是上一情节视频尾部抽帧得到的连续首帧参考。</p>
+      ) : null}
+      {displayFirst?.description ? <p className="beat-first-note">首帧描述：{displayFirst.description}</p> : null}
     </div>
   );
 }

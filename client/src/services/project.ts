@@ -129,6 +129,7 @@ export async function patchClip(
   clipId: string,
   body: {
     referenceOverrides?: Clip['referenceOverrides'] | null;
+    videoReferenceAssets?: Clip['videoReferenceAssets'] | null;
     beatPrompts?: {
       video_prompt?: string;
       first_frame?: {
@@ -260,6 +261,23 @@ export async function evaluateEpisode(
   const data = await request<{ taskId: string }>(`${API_BASE}/generate/evaluation`, {
     method: 'POST',
     body: JSON.stringify({ projectId, episodeId, scopes }),
+  });
+  return data.taskId;
+}
+
+export async function editVideos(
+  projectId: string,
+  episodeId: string,
+  options?: { clipIds?: string[]; editOptions?: Record<string, unknown> },
+): Promise<string> {
+  const data = await request<{ taskId: string }>(`${API_BASE}/generate/edit-videos`, {
+    method: 'POST',
+    body: JSON.stringify({
+      projectId,
+      episodeId,
+      clipIds: options?.clipIds,
+      editOptions: options?.editOptions,
+    }),
   });
   return data.taskId;
 }

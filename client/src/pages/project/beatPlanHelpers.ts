@@ -17,3 +17,11 @@ export function hasBeatStoryboardContent(plan: StoryboardPlan | null | undefined
 export function storyboardPlanForDisplay(plan: StoryboardPlan): StoryboardPlan {
   return plan;
 }
+
+export function resolveVideoFirstFrameRef(slot: BeatFrameSlot | null | undefined): string | null {
+  if (!slot) return null;
+  const continuity = typeof slot.continuityImageUrl === 'string' ? slot.continuityImageUrl.trim() : '';
+  if (continuity) return continuity;
+  const primary = typeof slot.imageUrl === 'string' ? slot.imageUrl.trim() : '';
+  return primary || null;
+}

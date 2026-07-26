@@ -44,7 +44,9 @@ def apply_beat_frame_plan_for_clip(
     art_style: str,
     language: str,
     ai_settings: dict,
-) -> None:
+    previous_clip: dict | None = None,
+    previous_storyboard_plan: dict | None = None,
+) -> dict:
     """单条 clip 增量写入 storyboardPlan，并将旧 panels 归档为 inactive。"""
     plan = generate_beat_frames_skill(
         clip=clip,
@@ -53,6 +55,8 @@ def apply_beat_frame_plan_for_clip(
         art_style=art_style,
         language=language,
         ai_settings=ai_settings,
+        previous_clip=previous_clip,
+        previous_storyboard_plan=previous_storyboard_plan,
     )
     if isinstance(plan, dict):
         plan['referenceStale'] = False
@@ -72,6 +76,7 @@ def apply_beat_frame_plan_for_clip(
             'updatedAt': now,
         }},
     )
+    return plan
 
 
 @app.task(
@@ -111,6 +116,8 @@ def generate_beat_prompts(
         if not clips:
             raise ValueError('No clips found for beat prompt generation')
 
+        previous_clip = None
+        previous_plan = None
         for i, clip in enumerate(clips):
             pct = 5 + int((i + 1) / len(clips) * 88)
             publish_progress(
@@ -118,14 +125,17 @@ def generate_beat_prompts(
                 f"首尾帧 Prompt {i + 1}/{len(clips)}: {clip.get('summary', '')[:30]}...",
                 'generating_beat_prompts',
             )
-            apply_beat_frame_plan_for_clip(
+            previous_plan = apply_beat_frame_plan_for_clip(
                 db, now, episode_id, project_id, clip,
                 characters=characters,
                 locations=locations,
                 art_style=art_style,
                 language=language,
                 ai_settings=ai_settings,
+                previous_clip=previous_clip,
+                previous_storyboard_plan=previous_plan,
             )
+            previous_clip = {**clip, 'storyboardPlan': previous_plan}
 
         db.episodes.update_one(
             {'episodeId': episode_id},

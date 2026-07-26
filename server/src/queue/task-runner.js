@@ -20,7 +20,7 @@ import { emitStoryAnalysisEnqueuedSpan, logPipelineEvent } from '../utils/pipeli
  * 创建并发布任务
  *
  * @param {{
- *   type: 'STORY_ANALYSIS'|'BEAT_PROMPT_GEN'|'STORYBOARD_GEN'|'IMAGE_GENERATION'|'VIDEO_GENERATION'|'EPISODE_EVALUATION',
+ *   type: 'STORY_ANALYSIS'|'BEAT_PROMPT_GEN'|'STORYBOARD_GEN'|'IMAGE_GENERATION'|'VIDEO_GENERATION'|'EPISODE_EVALUATION'|'VIDEO_EDITING',
  *   projectId: string,
  *   episodeId?: string,
  *   payload?: object
@@ -136,6 +136,16 @@ export async function enqueueTask({ type, projectId, episodeId, payload = {} }) 
           episodeId,
           projectId,
           scopes: payload.scopes || [],
+        });
+        break;
+
+      case 'VIDEO_EDITING':
+        await CeleryTasks.editVideos({
+          taskId,
+          episodeId: episodeId || null,
+          projectId,
+          clipIds: payload.clipIds || [],
+          editOptions: payload.editOptions || {},
         });
         break;
 

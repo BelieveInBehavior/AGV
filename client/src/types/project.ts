@@ -92,6 +92,8 @@ export interface Episode {
     | 'storyboard_ready'
     | 'images_ready'
     | 'video_ready'
+    | 'editing'
+    | 'edited'
     | 'complete';
   clipIds: string[];
   evaluation?: EpisodeEvaluation | null;
@@ -137,6 +139,14 @@ export interface BeatFrameSlot {
   imagePromptUsed?: string;
   imageError?: string;
   status?: string;
+  /** 由上一情节视频尾部抽帧得到的连续性首帧参考，不覆盖原始首帧图 */
+  continuityImageUrl?: string | null;
+  continuitySourceClipId?: string | null;
+}
+
+export interface VideoReferenceAssets {
+  videoUrls?: string[];
+  audioUrls?: string[];
 }
 
 export interface StoryboardPlan {
@@ -167,17 +177,21 @@ export interface Clip {
   storyboardPlan?: StoryboardPlan | null;
   /** 首尾帧链路生成的视频 URL（Mongo clip 顶层字段） */
   videoUrl?: string | null;
+  /** 剪辑后的最终视频 URL（从完整集视频剪辑得到） */
+  editedVideoUrl?: string | null;
   panels: Panel[];
   /** 本情节临时覆盖参考图（角色名 → URL；locationImage 覆盖当前场景，优先 OSS URL） */
   referenceOverrides?: {
     characterImages?: Record<string, string>;
     locationImage?: string | null;
   } | null;
+  /** Ark / Seedance 主视频链路的额外参考视频/音频 URL */
+  videoReferenceAssets?: VideoReferenceAssets | null;
 }
 
 export interface Task {
   taskId: string;
-  type: 'STORY_ANALYSIS' | 'BEAT_PROMPT_GEN' | 'STORYBOARD_GEN' | 'IMAGE_GENERATION' | 'VIDEO_GENERATION' | 'EPISODE_EVALUATION';
+  type: 'STORY_ANALYSIS' | 'BEAT_PROMPT_GEN' | 'STORYBOARD_GEN' | 'IMAGE_GENERATION' | 'VIDEO_GENERATION' | 'VIDEO_EDITING' | 'EPISODE_EVALUATION';
   status: 'pending' | 'queued' | 'claimed' | 'running' | 'retrying' | 'completed' | 'failed';
   progress: number;
   message: string;

@@ -20,6 +20,8 @@ from utils.reference_assets import (
     collect_frame_reference_urls,
     collect_reference_urls,
     reference_descriptions_for_prompt,
+    sign_oss_url,
+    upload_image_data_url_to_oss,
 )
 import config
 
@@ -116,6 +118,107 @@ def _character_direction_hint_english(frame: dict) -> str:
     if not parts:
         return ''
     return 'Character direction — ' + ' | '.join(parts)
+
+
+def _image_url(value) -> str:
+    if not isinstance(value, str):
+        return ''
+    safe = value.strip()
+    if safe.startswith('http://') or safe.startswith('https://') or safe.startswith('data:image/'):
+        return safe
+    return ''
+
+
+def _previous_clip_tail_frame(db, clip: dict) -> dict | None:
+    episode_id = clip.get('episodeId')
+    clip_index = clip.get('clipIndex')
+    if not episode_id or not isinstance(clip_index, int) or clip_index <= 0:
+        return None
+    prev = db.clips.find_one({
+        'episodeId': episode_id,
+        'clipIndex': clip_index - 1,
+        'isActive': {'$ne': False},
+    })
+    if not prev:
+        return None
+    plan = prev.get('storyboardPlan') if isinstance(prev.get('storyboardPlan'), dict) else {}
+    tail = plan.get('last_frame') if isinstance(plan.get('last_frame'), dict) else None
+    return tail if tail else None
+
+
+def _continuity_reference_url(db, clip: dict, slot: str) -> str:
+    if slot == 'last_frame':
+        current = db.clips.find_one({'clipId': clip.get('clipId')}) or clip
+        plan = current.get('storyboardPlan') if isinstance(current.get('storyboardPlan'), dict) else {}
+        first = plan.get('first_frame') if isinstance(plan.get('first_frame'), dict) else {}
+        return _image_url(sign_oss_url(first.get('imageUrl')))
+    if slot == 'first_frame':
+        tail = _previous_clip_tail_frame(db, clip)
+        return _image_url(sign_oss_url(tail.get('imageUrl'))) if isinstance(tail, dict) else ''
+    return ''
+
+
+def _continuity_prompt_suffix(clip: dict, slot: str, frame: dict) -> str:
+    if slot == 'last_frame':
+        return (
+            'Continuity rule — this is the ending keyframe of the current shot. '
+            'Use the current first-frame reference as the starting state; preserve camera direction, scene layout, character identity, lighting, and only change pose/props required by this beat ending.'
+        )
+    if slot == 'first_frame' and clip.get('clipIndex'):
+        return (
+            'Continuity rule — this is the opening keyframe of a later shot. '
+            'If the story is continuous, inherit the previous shot ending frame: same camera direction, spatial left-right coordinates, lighting, character placement, costume, and prop state; make only the minimum changes needed for this beat start. '
+            'If this beat is a clear cut or scene change, keep character and style consistency while allowing the new setting.'
+        )
+    return ''
+
+
+def _claim_beat_frame_generation(db, clip_id: str, path_base: str, task_id: str, now) -> None:
+    db.clips.update_one(
+        {'clipId': clip_id},
+        {'$set': {
+            f'{path_base}.status': 'generating_image',
+            f'{path_base}.activeImageTaskId': task_id,
+            f'{path_base}.imageGenerationStartedAt': now,
+            'updatedAt': now,
+        }},
+    )
+
+
+def _finish_beat_frame_generation(db, clip_id: str, path_base: str, task_id: str, set_doc: dict) -> bool:
+    final_doc = {
+        **set_doc,
+        f'{path_base}.activeImageTaskId': None,
+    }
+    result = db.clips.update_one(
+        {'clipId': clip_id, f'{path_base}.activeImageTaskId': task_id},
+        {'$set': final_doc},
+    )
+    return bool(result.modified_count)
+
+
+def _mark_beat_frame_failed(db, clip_id: str, path_base: str, task_id: str, error_message: str, now) -> bool:
+    current = db.clips.find_one(
+        {'clipId': clip_id},
+        {path_base: 1, '_id': 0},
+    ) or {}
+    frame = (((current.get('storyboardPlan') or {}).get(path_base.split('.')[-1])) if path_base.startswith('storyboardPlan.') else None) or {}
+    current_url = _image_url(frame.get('imageUrl'))
+    current_status = frame.get('status')
+    if current_url and not _is_data_url(current_url) and current_status == 'image_ready':
+        print(f'[INFO] Skip stale failure update for {clip_id}:{path_base}, ready image already exists')
+        return False
+
+    result = db.clips.update_one(
+        {'clipId': clip_id, f'{path_base}.activeImageTaskId': task_id},
+        {'$set': {
+            f'{path_base}.status': 'image_failed',
+            f'{path_base}.imageError': error_message,
+            f'{path_base}.activeImageTaskId': None,
+            'updatedAt': now,
+        }},
+    )
+    return bool(result.modified_count)
 
 
 @app.task(
@@ -237,10 +340,7 @@ def generate_images(self, task_id: str, project_id: str,
                 slot = item['slot']
                 frame = item['frame']
                 path_base = f'storyboardPlan.{slot}'
-                db.clips.update_one(
-                    {'clipId': clip['clipId']},
-                    {'$set': {f'{path_base}.status': 'generating_image', 'updatedAt': now}},
-                )
+                _claim_beat_frame_generation(db, clip['clipId'], path_base, task_id, now)
                 try:
                     # 如果已有 data URL，直接上传到 OSS，无需重新生成
                     force_regenerate = bool(item.get('force_regenerate'))
@@ -250,7 +350,6 @@ def generate_images(self, task_id: str, project_id: str,
                         if _is_data_url(existing_data_url):
                             print(f'[INFO] Uploading existing data URL for {clip["clipId"]}:{slot}')
                             try:
-                                from utils.reference_assets import upload_image_data_url_to_oss
                                 oss_result = upload_image_data_url_to_oss(existing_data_url, f'{slot}.jpg', 'clips')
                                 image_url = oss_result['url']
                                 set_doc = {
@@ -258,9 +357,12 @@ def generate_images(self, task_id: str, project_id: str,
                                     f'{path_base}.status': 'image_ready',
                                     'updatedAt': now,
                                 }
-                                db.clips.update_one({'clipId': clip['clipId']}, {'$set': set_doc})
-                                success += 1
-                                if episode_id and slot == 'first_frame':
+                                committed = _finish_beat_frame_generation(db, clip['clipId'], path_base, task_id, set_doc)
+                                if committed:
+                                    success += 1
+                                else:
+                                    print(f'[INFO] Skip stale success update for {clip["clipId"]}:{slot}')
+                                if committed and episode_id and slot == 'first_frame':
                                     pipeline_telemetry.maybe_record_first_beat_frame_image(
                                         db,
                                         episode_id,
@@ -280,9 +382,12 @@ def generate_images(self, task_id: str, project_id: str,
                             f'{path_base}.status': 'image_ready',
                             'updatedAt': now,
                         }
-                        db.clips.update_one({'clipId': clip['clipId']}, {'$set': set_doc})
-                        success += 1
-                        if episode_id and slot == 'first_frame':
+                        committed = _finish_beat_frame_generation(db, clip['clipId'], path_base, task_id, set_doc)
+                        if committed:
+                            success += 1
+                        else:
+                            print(f'[INFO] Skip stale ready-mark update for {clip["clipId"]}:{slot}')
+                        if committed and episode_id and slot == 'first_frame':
                             pipeline_telemetry.maybe_record_first_beat_frame_image(
                                 db,
                                 episode_id,
@@ -293,6 +398,9 @@ def generate_images(self, task_id: str, project_id: str,
                         continue
 
                     desc_suffix = reference_descriptions_for_prompt(project, clip)
+                    continuity_suffix = _continuity_prompt_suffix(clip, slot, frame)
+                    if continuity_suffix:
+                        desc_suffix = f'{desc_suffix} | {continuity_suffix}' if desc_suffix else continuity_suffix
                     scene_prompt = (frame.get('scene_prompt') or '').strip()
                     char_urls: dict[str, str] = {}
                     for ch in frame.get('characters') or []:
@@ -325,6 +433,9 @@ def generate_images(self, task_id: str, project_id: str,
                         frame,
                         character_state_urls=char_urls,
                     )
+                    continuity_ref = _continuity_reference_url(db, clip, slot)
+                    if continuity_ref:
+                        ref_stack = [continuity_ref, *[u for u in ref_stack if u != continuity_ref]]
                     print(f'[DEBUG] ref_stack before truncate: {ref_stack}')
                     print(f'[DEBUG] char_urls: {char_urls}')
                     print(f'[DEBUG] frame.characters: {frame.get("characters")}')
@@ -372,9 +483,12 @@ def generate_images(self, task_id: str, project_id: str,
                         f'{path_base}.imageError': None,
                         'updatedAt': now,
                     }
-                    db.clips.update_one({'clipId': clip['clipId']}, {'$set': set_doc})
-                    success += 1
-                    if episode_id and slot == 'first_frame':
+                    committed = _finish_beat_frame_generation(db, clip['clipId'], path_base, task_id, set_doc)
+                    if committed:
+                        success += 1
+                    else:
+                        print(f'[INFO] Skip stale success update for {clip["clipId"]}:{slot}')
+                    if committed and episode_id and slot == 'first_frame':
                         pipeline_telemetry.maybe_record_first_beat_frame_image(
                             db,
                             episode_id,
@@ -384,14 +498,8 @@ def generate_images(self, task_id: str, project_id: str,
                         )
                 except Exception as panel_err:
                     item_errors.append(f'beat:{clip["clipId"]}:{slot}: {panel_err}')
-                    db.clips.update_one(
-                        {'clipId': clip['clipId']},
-                        {'$set': {
-                            f'{path_base}.status': 'image_failed',
-                            f'{path_base}.imageError': str(panel_err),
-                            'updatedAt': now,
-                        }},
-                    )
+                    if not _mark_beat_frame_failed(db, clip['clipId'], path_base, task_id, str(panel_err), now):
+                        print(f'[INFO] Skip stale failure update for {clip["clipId"]}:{slot}')
 
             else:
                 raise RuntimeError(f'Unknown image job kind: {item.get("kind")}')

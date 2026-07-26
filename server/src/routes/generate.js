@@ -214,6 +214,34 @@ router.post('/videos', async (req, res) => {
   }
 });
 
+// ── POST /api/generate/edit-videos — 触发视频剪辑后处理 ───────────────
+router.post('/edit-videos', async (req, res) => {
+  try {
+    const db = getDB();
+    const { projectId, episodeId, clipIds, editOptions } = req.body || {};
+    if (!projectId || !episodeId) {
+      return res.status(400).json({ success: false, message: 'projectId 和 episodeId 必填' });
+    }
+
+    const project = await db.collection('projects').findOne({ projectId, userId: req.userId });
+    if (!project) return res.status(404).json({ success: false, message: '项目不存在' });
+
+    const taskId = await enqueueTask({
+      type: 'VIDEO_EDITING',
+      projectId,
+      episodeId,
+      payload: {
+        clipIds: clipIds || [],
+        editOptions: editOptions || {},
+      },
+    });
+
+    res.json({ success: true, taskId });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // ── POST /api/generate/videos/ark/tasks — Ark 提交生视频任务（独立可复用）───
 router.post('/videos/ark/tasks', async (req, res) => {
   try {

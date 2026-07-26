@@ -28,6 +28,8 @@ VIDEO_API_BASE_URL = os.getenv('VIDEO_API_BASE_URL', '')
 VIDEO_API_KEY = os.getenv('VIDEO_API_KEY', '')
 VIDEO_API_PATH = os.getenv('VIDEO_API_PATH', 'v1/videos').strip().strip('/')
 VIDEO_MODEL = os.getenv('VIDEO_MODEL', '')
+VIDEO_RESOLUTION = os.getenv('VIDEO_RESOLUTION', '480p')
+VIDEO_GENERATE_AUDIO = os.getenv('VIDEO_GENERATE_AUDIO', '').lower() in ('1', 'true', 'yes')
 
 # Celery
 CELERY_BROKER_URL = REDIS_URL
