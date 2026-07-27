@@ -4,21 +4,28 @@ import LoginPage from './pages/login';
 import HomePage from './pages/home';
 import ProjectPage from './pages/project';
 import SettingsPage from './pages/settings';
-import { getToken, isDevAutoLoginEnabled, tryDevAutoLogin } from './services/auth';
+import { isDevAutoLoginEnabled, tryDevAutoLogin, validateStoredSession } from './services/auth';
 
 export default function App() {
-  const [authReady, setAuthReady] = useState(() => Boolean(getToken()) || !isDevAutoLoginEnabled());
+  const [authReady, setAuthReady] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   useEffect(() => {
-    if (authReady) return;
     let cancelled = false;
-    void tryDevAutoLogin().finally(() => {
-      if (!cancelled) setAuthReady(true);
-    });
+    void (async () => {
+      let loggedIn = await validateStoredSession();
+      if (!loggedIn && isDevAutoLoginEnabled()) {
+        loggedIn = await tryDevAutoLogin();
+      }
+      if (!cancelled) {
+        setIsLoggedIn(loggedIn);
+        setAuthReady(true);
+      }
+    })();
     return () => {
       cancelled = true;
     };
-  }, [authReady]);
+  }, []);
 
   if (!authReady) {
     return (
@@ -29,9 +36,6 @@ export default function App() {
       </main>
     );
   }
-
-  const isLoggedIn = Boolean(getToken());
-
   if (!isLoggedIn) {
     return (
       <Routes>

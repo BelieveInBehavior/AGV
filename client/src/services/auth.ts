@@ -55,6 +55,28 @@ export async function ensureSessionValid(): Promise<void> {
   }
 }
 
+/** 启动阶段校验本地 token：失效则清理，网络异常则保守地保留当前会话 */
+export async function validateStoredSession(): Promise<boolean> {
+  const token = getToken();
+  if (!token) return false;
+  try {
+    const res = await fetch(`${API_BASE}/auth/user_info`, {
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    });
+    const data = (await res.json().catch(() => ({}))) as ApiBody & { user_info?: UserInfo };
+    if (isUnauthorizedResponse(res, data)) {
+      clearAuth();
+      return false;
+    }
+    if (data?.success && data.user_info) {
+      setUserInfo(data.user_info);
+    }
+    return true;
+  } catch {
+    return true;
+  }
+}
+
 export function setUserInfo(user: UserInfo) {
   localStorage.setItem(USER_KEY, JSON.stringify(user));
 }

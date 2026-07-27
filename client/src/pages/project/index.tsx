@@ -35,7 +35,35 @@ import { effectiveCharacterRefUrl, sceneRefReady } from './visualRefHelpers';
 
 type Stage = 'input' | 'clips' | 'prompts' | 'video' | 'editing';
 type EvaluationScope = 'story_analysis' | 'beat_frames' | 'all';
-type SubtitleAnimation = 'none' | 'fade' | 'slide-up' | 'pop';
+type SubtitleAnimation =
+  | 'none'
+  | 'fade'
+  | 'slide-up'
+  | 'slide-down'
+  | 'slide-left'
+  | 'slide-right'
+  | 'pop'
+  | 'bounce'
+  | 'pulse'
+  | 'blur-in'
+  | 'flip';
+type SubtitleStyleCategory = 'basic' | 'bubble' | 'fancy';
+type SubtitleInspectorTab = 'content' | 'style' | 'motion';
+type SubtitleStylePreset =
+  | 'caption-solid'
+  | 'caption-glass'
+  | 'caption-outline'
+  | 'bubble-rounded'
+  | 'bubble-chat'
+  | 'bubble-pill'
+  | 'bubble-cloud'
+  | 'bubble-thought'
+  | 'bubble-note'
+  | 'bubble-shout'
+  | 'bubble-whisper'
+  | 'highlight-tape'
+  | 'sticker-pop'
+  | 'comic-burst';
 type SubtitleCue = {
   start: number;
   end: number;
@@ -45,6 +73,7 @@ type SubtitleCue = {
   x: number;
   y: number;
   animation: SubtitleAnimation;
+  stylePreset: SubtitleStylePreset;
 };
 
 const SUBTITLE_VERTICAL_OPTIONS: { label: string; value: SubtitleCue['vertical'] }[] = [
@@ -62,9 +91,59 @@ const SUBTITLE_ALIGN_OPTIONS: { label: string; value: SubtitleCue['align'] }[] =
 const SUBTITLE_ANIMATION_OPTIONS: { label: string; value: SubtitleAnimation }[] = [
   { label: '淡入', value: 'fade' },
   { label: '上浮', value: 'slide-up' },
+  { label: '下落', value: 'slide-down' },
+  { label: '左滑', value: 'slide-left' },
+  { label: '右滑', value: 'slide-right' },
   { label: '弹出', value: 'pop' },
+  { label: '弹跳', value: 'bounce' },
+  { label: '脉冲', value: 'pulse' },
+  { label: '模糊显现', value: 'blur-in' },
+  { label: '翻转', value: 'flip' },
   { label: '静止', value: 'none' },
 ];
+
+const SUBTITLE_STYLE_CATEGORY_OPTIONS: { label: string; value: SubtitleStyleCategory }[] = [
+  { label: '基础', value: 'basic' },
+  { label: '气泡', value: 'bubble' },
+  { label: '花字', value: 'fancy' },
+];
+
+const SUBTITLE_STYLE_OPTIONS: {
+  label: string;
+  value: SubtitleStylePreset;
+  category: SubtitleStyleCategory;
+  description: string;
+  preview: string;
+}[] = [
+  { label: '经典字幕', value: 'caption-solid', category: 'basic', description: '稳妥通用，适合旁白和对白。', preview: '今天也要元气满满' },
+  { label: '玻璃卡片', value: 'caption-glass', category: 'basic', description: '轻透面板，适合科技感画面。', preview: '镜头推进中' },
+  { label: '描边字幕', value: 'caption-outline', category: 'basic', description: '弱背景也清晰，适合纪录片。', preview: '继续向前' },
+  { label: '圆角气泡', value: 'bubble-rounded', category: 'bubble', description: '柔和圆角，适合日常聊天。', preview: '今天也很开心呀' },
+  { label: '对话框', value: 'bubble-chat', category: 'bubble', description: '带尾巴的聊天框，适合人物说话。', preview: '这句台词在这里出现' },
+  { label: '胶囊标签', value: 'bubble-pill', category: 'bubble', description: '短句强调，适合关键词。', preview: '夏天快乐' },
+  { label: '云朵气泡', value: 'bubble-cloud', category: 'bubble', description: '更松软的对白框，适合可爱语气。', preview: '欢迎回来呀' },
+  { label: '思考泡', value: 'bubble-thought', category: 'bubble', description: '适合内心 OS 或犹豫停顿。', preview: '嗯……这样行吗' },
+  { label: '便签对白', value: 'bubble-note', category: 'bubble', description: '像漫画注释框，适合解释句。', preview: '这一句是补充说明' },
+  { label: '喊话爆框', value: 'bubble-shout', category: 'bubble', description: '情绪更强，适合大声强调。', preview: '现在就出发' },
+  { label: '低语黑泡', value: 'bubble-whisper', category: 'bubble', description: '压低氛围，适合神秘感。', preview: '别让别人听见' },
+  { label: '高亮贴纸', value: 'highlight-tape', category: 'fancy', description: '像便签胶带，适合重点句。', preview: '本段重点信息' },
+  { label: '糖果花字', value: 'sticker-pop', category: 'fancy', description: '明亮跳色，适合轻快内容。', preview: '元气值拉满' },
+  { label: '漫画爆点', value: 'comic-burst', category: 'fancy', description: '适合强调爆点和情绪。', preview: '现在登场' },
+];
+
+const SUBTITLE_STYLE_MAP = Object.fromEntries(
+  SUBTITLE_STYLE_OPTIONS.map((option) => [option.value, option]),
+) as Record<SubtitleStylePreset, (typeof SUBTITLE_STYLE_OPTIONS)[number]>;
+
+function normalizeSubtitleStylePreset(value: unknown): SubtitleStylePreset {
+  return SUBTITLE_STYLE_OPTIONS.some((option) => option.value === value)
+    ? (value as SubtitleStylePreset)
+    : 'caption-solid';
+}
+
+function getSubtitleStyleCategory(value: SubtitleStylePreset): SubtitleStyleCategory {
+  return SUBTITLE_STYLE_MAP[value]?.category || 'basic';
+}
 
 function formatSrtTime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -87,7 +166,17 @@ function cuesToSrt(cues: SubtitleCue[]): string {
 function generateDefaultCue(videoDuration: number, start?: number): SubtitleCue {
   const s = typeof start === 'number' ? start : 0;
   const e = Math.min(s + 3, videoDuration || 10);
-  return { start: s, end: e, text: '', vertical: 'bottom', align: 'center', x: 50, y: 88, animation: 'fade' };
+  return {
+    start: s,
+    end: e,
+    text: '',
+    vertical: 'bottom',
+    align: 'center',
+    x: 50,
+    y: 88,
+    animation: 'fade',
+    stylePreset: 'caption-solid',
+  };
 }
 
 function formatTimelineTime(seconds: number): string {
@@ -136,6 +225,7 @@ function normalizeCue(cue: SubtitleCue, videoDuration: number): SubtitleCue {
     text: cue.text.trim(),
     x: Number(clampCuePercent(cue.x, fallbackPosition.x).toFixed(2)),
     y: Number(clampCuePercent(cue.y, fallbackPosition.y).toFixed(2)),
+    stylePreset: normalizeSubtitleStylePreset(cue.stylePreset),
   };
 }
 
@@ -333,6 +423,8 @@ export default function ProjectPage() {
   const [subtitleFrameTaskId, setSubtitleFrameTaskId] = useState<string | null>(null);
   const [subtitleFrames, setSubtitleFrames] = useState<{ timestamp: number; imageUrl: string }[]>([]);
   const [selectedCueIndex, setSelectedCueIndex] = useState<number | null>(null);
+  const [subtitleStyleCategory, setSubtitleStyleCategory] = useState<SubtitleStyleCategory>('basic');
+  const [subtitleInspectorTab, setSubtitleInspectorTab] = useState<SubtitleInspectorTab>('content');
   const [videoTaskIdsByClip, setVideoTaskIdsByClip] = useState<Record<string, string>>({});
   const [evaluationModal, setEvaluationModal] = useState<{ open: boolean; scope: EvaluationScope }>({
     open: false,
@@ -694,6 +786,8 @@ export default function ProjectPage() {
     setSubtitleEditorDurationSource('estimated');
     setSubtitleFrames([]);
     setSelectedCueIndex(null);
+    setSubtitleStyleCategory('basic');
+    setSubtitleInspectorTab('content');
     setSubtitleEditorOpen(true);
     void startExtractFrames(clip.videoUrl);
   };
@@ -905,6 +999,7 @@ export default function ProjectPage() {
   );
 
   const subtitleVideoClips = clips.filter((clip) => Boolean(clip.videoUrl));
+  const subtitleEditorCues = subtitleEditorClipId ? (subtitleTimelineByClip[subtitleEditorClipId] || []) : [];
 
   useEffect(() => {
     if (subtitleVideoClips.length === 0) {
@@ -915,6 +1010,13 @@ export default function ProjectPage() {
       setSubtitleTargetClipId(subtitleVideoClips[0].clipId);
     }
   }, [subtitleTargetClipId, subtitleVideoClips]);
+
+  useEffect(() => {
+    if (selectedCueIndex === null) return;
+    const cue = subtitleEditorCues[selectedCueIndex];
+    if (!cue) return;
+    setSubtitleStyleCategory(getSubtitleStyleCategory(normalizeSubtitleStylePreset(cue.stylePreset)));
+  }, [selectedCueIndex, subtitleEditorCues]);
 
   const allRunningTasks = Object.values(tasks).filter((t) => isRunningTaskStatus(t.status));
   const runningTasks = allRunningTasks.filter((t) => !NON_BLOCKING_TASK_TYPES.has(t.type));
@@ -940,7 +1042,6 @@ export default function ProjectPage() {
     ? 'all'
     : 'beat_frames';
   const subtitleTargetClip = subtitleVideoClips.find((clip) => clip.clipId === subtitleTargetClipId) || subtitleVideoClips[0] || null;
-  const subtitleEditorCues = subtitleEditorClipId ? (subtitleTimelineByClip[subtitleEditorClipId] || []) : [];
   const normalizedSubtitleEditorCues = normalizeSubtitleCues(subtitleEditorCues, subtitleEditorDuration);
   const subtitleEditorIssues = getSubtitleCueIssues(subtitleEditorCues, subtitleEditorDuration);
   const activePreviewCues = normalizedSubtitleEditorCues
@@ -1750,7 +1851,7 @@ export default function ProjectPage() {
                           {activePreviewCues.map(({ cue, index }) => (
                             <div
                               key={`${cue.start}-${index}`}
-                              className={`subtitle-overlay-line is-free fx-${cue.animation} ${selectedCueIndex === index ? 'is-selected' : ''}`}
+                              className={`subtitle-overlay-line is-free ${selectedCueIndex === index ? 'is-selected' : ''}`}
                               style={{
                                 left: `${cue.x}%`,
                                 top: `${cue.y}%`,
@@ -1758,10 +1859,15 @@ export default function ProjectPage() {
                               onPointerDown={(e) => {
                                 e.stopPropagation();
                                 setSelectedCueIndex(index);
+                                setSubtitleInspectorTab('content');
                                 subtitleOverlayDragRef.current = index;
                               }}
                             >
-                              {cue.text}
+                              <div
+                                className={`subtitle-overlay-badge style-${normalizeSubtitleStylePreset(cue.stylePreset)}`}
+                              >
+                                <span className={`subtitle-overlay-text fx-${cue.animation}`}>{cue.text}</span>
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -1808,6 +1914,7 @@ export default function ProjectPage() {
                         onClick={(e) => {
                           e.stopPropagation();
                           setSelectedCueIndex(idx);
+                          setSubtitleInspectorTab('content');
                           seekSubtitlePreview(cue.start);
                         }}
                       >
@@ -1816,6 +1923,7 @@ export default function ProjectPage() {
                           onPointerDown={(e) => {
                             e.stopPropagation();
                             setSelectedCueIndex(idx);
+                            setSubtitleInspectorTab('content');
                             subtitleCueDragRef.current = { cueIndex: idx, edge: 'start' };
                             setSubtitlePreviewScrubbing(true);
                             subtitlePreviewRef.current?.pause();
@@ -1826,6 +1934,7 @@ export default function ProjectPage() {
                           onPointerDown={(e) => {
                             e.stopPropagation();
                             setSelectedCueIndex(idx);
+                            setSubtitleInspectorTab('content');
                             subtitleCueDragRef.current = { cueIndex: idx, edge: 'end' };
                             setSubtitlePreviewScrubbing(true);
                             subtitlePreviewRef.current?.pause();
@@ -1867,9 +1976,6 @@ export default function ProjectPage() {
                       <button className="btn-ghost btn-small" onClick={normalizeCurrentSubtitleCues} disabled={subtitleEditorCues.length === 0}>
                         智能整理
                       </button>
-                      <button className="btn-ghost btn-small" onClick={() => addSubtitleCue(subtitleEditorCurrentTime)} disabled={subtitleEditorDuration <= 0}>
-                        在当前播放头新增
-                      </button>
                       <button className="btn-ghost btn-small" onClick={() => addSubtitleCue()} disabled={subtitleEditorDuration <= 0}>
                         ➕ 添加字幕
                       </button>
@@ -1877,14 +1983,18 @@ export default function ProjectPage() {
                   </div>
 
                   {subtitleEditorCues.length === 0 ? (
-                    <p className="empty-hint">暂无字幕，点击关键帧或使用自然语言描述添加</p>
+                    <p className="empty-hint">暂无字幕，点击关键帧或使用上方按钮直接添加</p>
                   ) : (
                     <div className="cues-list">
                       {subtitleEditorCues.map((cue, idx) => (
                         <div
                           key={idx}
                           className={`cue-card ${selectedCueIndex === idx ? 'selected' : ''}`}
-                          onClick={() => setSelectedCueIndex(selectedCueIndex === idx ? null : idx)}
+                          onClick={() => {
+                            const nextSelected = selectedCueIndex === idx ? null : idx;
+                            setSelectedCueIndex(nextSelected);
+                            if (nextSelected !== null) setSubtitleInspectorTab('content');
+                          }}
                         >
                           <div className="cue-header">
                             <span className="cue-index">字幕 {idx + 1}</span>
@@ -1908,91 +2018,144 @@ export default function ProjectPage() {
                               onPointerDown={(e) => e.stopPropagation()}
                               onClick={(e) => e.stopPropagation()}
                             >
-                              <div className="cue-edit-row">
-                                <label>文本</label>
-                                <textarea
-                                  value={cue.text}
-                                  onChange={(e) => updateSubtitleCue(idx, { text: e.target.value })}
-                                  rows={2}
-                                  className="cue-text-input"
-                                  placeholder="输入字幕文本..."
-                                />
-                              </div>
-
-                              <div className="cue-edit-grid">
-                                <div className="cue-edit-row">
-                                  <label>开始时间（秒）</label>
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    max={subtitleEditorDuration}
-                                    step="0.1"
-                                    value={cue.start}
-                                    onChange={(e) => updateSubtitleCue(idx, { start: parseFloat(e.target.value) })}
-                                    className="cue-time-input"
-                                  />
-                                </div>
-
-                                <div className="cue-edit-row">
-                                  <label>结束时间（秒）</label>
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    max={subtitleEditorDuration}
-                                    step="0.1"
-                                    value={cue.end}
-                                    onChange={(e) => updateSubtitleCue(idx, { end: parseFloat(e.target.value) })}
-                                    className="cue-time-input"
-                                  />
-                                </div>
-                              </div>
-
-                              <div className="cue-edit-grid">
-                                <div className="cue-edit-row">
-                                  <label>垂直位置</label>
-                                  <select
-                                    value={cue.vertical}
-                                    onChange={(e) => updateSubtitleCue(idx, { vertical: e.target.value as SubtitleCue['vertical'] })}
-                                    className="cue-select"
-                                  >
-                                    {SUBTITLE_VERTICAL_OPTIONS.map((opt) => (
-                                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                    ))}
-                                  </select>
-                                </div>
-
-                                <div className="cue-edit-row">
-                                  <label>水平对齐</label>
-                                  <select
-                                    value={cue.align}
-                                    onChange={(e) => updateSubtitleCue(idx, { align: e.target.value as SubtitleCue['align'] })}
-                                    className="cue-select"
-                                  >
-                                    {SUBTITLE_ALIGN_OPTIONS.map((opt) => (
-                                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                    ))}
-                                  </select>
-                                </div>
-                              </div>
-
-                              <div className="cue-edit-row">
-                                <label>预览动画</label>
-                                <select
-                                  value={cue.animation}
-                                  onChange={(e) => updateSubtitleCue(idx, { animation: e.target.value as SubtitleAnimation })}
-                                  className="cue-select"
+                              <div className="subtitle-inspector-tabs">
+                                <button
+                                  type="button"
+                                  className={`subtitle-inspector-tab ${subtitleInspectorTab === 'content' ? 'selected' : ''}`}
+                                  onClick={() => setSubtitleInspectorTab('content')}
                                 >
-                                  {SUBTITLE_ANIMATION_OPTIONS.map((opt) => (
-                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                  ))}
-                                </select>
+                                  基础
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`subtitle-inspector-tab ${subtitleInspectorTab === 'style' ? 'selected' : ''}`}
+                                  onClick={() => setSubtitleInspectorTab('style')}
+                                >
+                                  样式
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`subtitle-inspector-tab ${subtitleInspectorTab === 'motion' ? 'selected' : ''}`}
+                                  onClick={() => setSubtitleInspectorTab('motion')}
+                                >
+                                  动画
+                                </button>
                               </div>
+
+                              {subtitleInspectorTab === 'content' && (
+                                <>
+                                  <div className="cue-edit-row">
+                                    <label>文本</label>
+                                    <textarea
+                                      value={cue.text}
+                                      onChange={(e) => updateSubtitleCue(idx, { text: e.target.value })}
+                                      rows={2}
+                                      className="cue-text-input"
+                                      placeholder="输入字幕文本..."
+                                    />
+                                  </div>
+
+                                  <div className="cue-edit-grid">
+                                    <div className="cue-edit-row">
+                                      <label>开始时间（秒）</label>
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        max={subtitleEditorDuration}
+                                        step="0.1"
+                                        value={cue.start}
+                                        onChange={(e) => updateSubtitleCue(idx, { start: parseFloat(e.target.value) })}
+                                        className="cue-time-input"
+                                      />
+                                    </div>
+
+                                    <div className="cue-edit-row">
+                                      <label>结束时间（秒）</label>
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        max={subtitleEditorDuration}
+                                        step="0.1"
+                                        value={cue.end}
+                                        onChange={(e) => updateSubtitleCue(idx, { end: parseFloat(e.target.value) })}
+                                        className="cue-time-input"
+                                      />
+                                    </div>
+                                  </div>
+
+                                  <div className="cue-edit-grid">
+                                    <div className="cue-edit-row">
+                                      <label>垂直位置</label>
+                                      <select
+                                        value={cue.vertical}
+                                        onChange={(e) => updateSubtitleCue(idx, { vertical: e.target.value as SubtitleCue['vertical'] })}
+                                        className="cue-select"
+                                      >
+                                        {SUBTITLE_VERTICAL_OPTIONS.map((opt) => (
+                                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                        ))}
+                                      </select>
+                                    </div>
+
+                                    <div className="cue-edit-row">
+                                      <label>水平对齐</label>
+                                      <select
+                                        value={cue.align}
+                                        onChange={(e) => updateSubtitleCue(idx, { align: e.target.value as SubtitleCue['align'] })}
+                                        className="cue-select"
+                                      >
+                                        {SUBTITLE_ALIGN_OPTIONS.map((opt) => (
+                                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  </div>
+                                </>
+                              )}
+
+                              {subtitleInspectorTab === 'style' && (
+                                <div className="cue-edit-row">
+                                  <div className="subtitle-style-grid">
+                                    {SUBTITLE_STYLE_OPTIONS.map((option) => (
+                                      <button
+                                        key={option.value}
+                                        type="button"
+                                        className={`subtitle-style-card ${cue.stylePreset === option.value ? 'selected' : ''}`}
+                                        onClick={() => updateSubtitleCue(idx, { stylePreset: option.value })}
+                                        title={option.label}
+                                      >
+                                        <span className={`subtitle-style-swatch style-${option.value}`}>
+                                          {option.preview}
+                                        </span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {subtitleInspectorTab === 'motion' && (
+                                <div className="cue-edit-row">
+                                  <label>动画效果</label>
+                                  <div className="subtitle-animation-grid">
+                                    {SUBTITLE_ANIMATION_OPTIONS.map((opt) => (
+                                      <button
+                                        key={opt.value}
+                                        type="button"
+                                        className={`subtitle-animation-chip ${cue.animation === opt.value ? 'selected' : ''}`}
+                                        onClick={() => updateSubtitleCue(idx, { animation: opt.value })}
+                                      >
+                                        {opt.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           ) : (
                             <div className="cue-preview">
                               <p className="cue-text-preview">{cue.text || '未填写字幕文本'}</p>
                               <span className="cue-position-badge">
-                                {SUBTITLE_VERTICAL_OPTIONS.find((o) => o.value === cue.vertical)?.label} · {SUBTITLE_ALIGN_OPTIONS.find((o) => o.value === cue.align)?.label} · {SUBTITLE_ANIMATION_OPTIONS.find((o) => o.value === cue.animation)?.label}
+                                {SUBTITLE_STYLE_MAP[normalizeSubtitleStylePreset(cue.stylePreset)]?.label} · {SUBTITLE_VERTICAL_OPTIONS.find((o) => o.value === cue.vertical)?.label} · {SUBTITLE_ALIGN_OPTIONS.find((o) => o.value === cue.align)?.label} · {SUBTITLE_ANIMATION_OPTIONS.find((o) => o.value === cue.animation)?.label}
                               </span>
                             </div>
                           )}

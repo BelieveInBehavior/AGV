@@ -347,7 +347,41 @@ def _normalize_subtitle_position(vertical: Any, align: Any, x: Any = None, y: An
 
 def _normalize_subtitle_animation(value: Any) -> str:
     safe = str(value or 'fade').strip().lower()
-    return safe if safe in ('none', 'fade', 'slide-up', 'pop') else 'fade'
+    supported = {
+        'none',
+        'fade',
+        'slide-up',
+        'slide-down',
+        'slide-left',
+        'slide-right',
+        'pop',
+        'bounce',
+        'pulse',
+        'blur-in',
+        'flip',
+    }
+    return safe if safe in supported else 'fade'
+
+
+def _normalize_subtitle_style_preset(value: Any) -> str:
+    safe = str(value or 'caption-solid').strip().lower()
+    supported = {
+        'caption-solid',
+        'caption-glass',
+        'caption-outline',
+        'bubble-rounded',
+        'bubble-chat',
+        'bubble-pill',
+        'bubble-cloud',
+        'bubble-thought',
+        'bubble-note',
+        'bubble-shout',
+        'bubble-whisper',
+        'highlight-tape',
+        'sticker-pop',
+        'comic-burst',
+    }
+    return safe if safe in supported else 'caption-solid'
 
 
 def _normalize_subtitle_cues(cues: Any, video_duration: float) -> list[dict[str, Any]]:
@@ -383,6 +417,7 @@ def _normalize_subtitle_cues(cues: Any, video_duration: float) -> list[dict[str,
             'text': text,
             'position': _normalize_subtitle_position(vertical, align, x, y),
             'animation': _normalize_subtitle_animation(raw.get('animation')),
+            'stylePreset': _normalize_subtitle_style_preset(raw.get('stylePreset')),
         })
 
     normalized.sort(key=lambda cue: (cue['start'], cue['end']))
