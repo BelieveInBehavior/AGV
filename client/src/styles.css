@@ -604,13 +604,6 @@ button.stage-step.stage-step-nav.locked {
 }
 .btn-small { font-size: 12px; padding: 6px 10px; }
 
-.video-clip-list { display: flex; flex-direction: column; gap: 20px; }
-.video-clip-card {
-  background: #0f1428;
-  border: 1px solid #1e2647;
-  border-radius: 10px;
-  padding: 12px;
-}
 .video-clip-title { margin: 0 0 10px; font-size: 14px; color: #9ca7d3; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .final-video-badge {
   display: inline-block;
@@ -1497,11 +1490,12 @@ button.stage-step.stage-step-nav.locked {
 
 .editing-studio-layout {
   display: grid;
-  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 420px);
   gap: 24px;
   align-items: start;
 }
 
+.editing-preview-panel,
 .edit-options-panel--rich,
 .edited-video-list--studio {
   background:
@@ -1513,7 +1507,15 @@ button.stage-step.stage-step-nav.locked {
   box-shadow: 0 18px 40px rgba(3, 8, 24, 0.32);
 }
 
+.editing-preview-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 100%;
+}
+
 .subtitle-panel-head,
+.editing-preview-head,
 .subtitle-workbench-head,
 .section-heading-row {
   display: flex;
@@ -1523,6 +1525,7 @@ button.stage-step.stage-step-nav.locked {
 }
 
 .subtitle-panel-head h3,
+.editing-preview-head h3,
 .subtitle-workbench-head h4 {
   margin: 0;
   font-size: 18px;
@@ -1674,8 +1677,105 @@ button.stage-step.stage-step-nav.locked {
   color: #e5edff;
 }
 
-.edited-video-list--studio {
-  min-height: 420px;
+.editing-preview-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(10, 14, 26, 0.72);
+  border: 1px solid #24335a;
+}
+
+.editing-preview-summary strong {
+  font-size: 13px;
+  color: #eef2ff;
+}
+
+.editing-preview-summary span,
+.editing-preview-toolbar-copy span {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #94a3d3;
+}
+
+.editing-preview-player-wrap {
+  position: relative;
+  border-radius: 18px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at top, rgba(76, 110, 245, 0.18), transparent 42%),
+    #05070f;
+  border: 1px solid #253055;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.editing-preview-video {
+  width: 100%;
+  max-height: min(72vh, 860px);
+  display: block;
+  background: #000;
+}
+
+.editing-preview-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(11, 17, 32, 0.8);
+  border: 1px solid #223055;
+}
+
+.editing-preview-toolbar-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.editing-preview-toolbar-copy strong {
+  font-size: 13px;
+  color: #e5edff;
+}
+
+.editing-controls-sidebar {
+  position: sticky;
+  top: 20px;
+}
+
+.editing-output-library {
+  margin-top: 24px;
+}
+
+.editing-output-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.editing-output-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.editing-output-card.selected {
+  border-color: #5b7bf7;
+  box-shadow: 0 0 0 1px rgba(91, 123, 247, 0.32), 0 16px 28px rgba(3, 8, 24, 0.24);
+}
+
+.editing-output-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.editing-output-card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .edited-video-grid {
@@ -2362,6 +2462,11 @@ button.stage-step.stage-step-nav.locked {
   .subtitle-editor-body {
     grid-template-columns: 1fr;
   }
+
+  .editing-controls-sidebar {
+    position: static;
+    top: auto;
+  }
 }
 
 @media (max-width: 720px) {
@@ -2381,6 +2486,8 @@ button.stage-step.stage-step-nav.locked {
   }
 
   .subtitle-target-card,
+  .editing-preview-head,
+  .editing-preview-toolbar,
   .subtitle-panel-head,
   .subtitle-workbench-head,
   .section-heading-row {

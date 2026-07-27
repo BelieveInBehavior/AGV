@@ -33,7 +33,7 @@ import {
 } from './beatPlanHelpers';
 import { effectiveCharacterRefUrl, sceneRefReady } from './visualRefHelpers';
 
-type Stage = 'input' | 'clips' | 'prompts' | 'video' | 'editing';
+type Stage = 'input' | 'clips' | 'prompts' | 'editing';
 type EvaluationScope = 'story_analysis' | 'beat_frames' | 'all';
 type SubtitleAnimation =
   | 'none'
@@ -274,17 +274,16 @@ function scopesToModalScope(scopes: ('story_analysis' | 'beat_frames')[]): Evalu
   return scopes.length >= 2 ? 'all' : scopes[0];
 }
 
-const STAGE_ORDER: Stage[] = ['input', 'clips', 'prompts', 'video', 'editing'];
+const STAGE_ORDER: Stage[] = ['input', 'clips', 'prompts', 'editing'];
 
 function defaultStageForEpisode(ep: Episode | null): Stage {
   if (!ep) return 'input';
   switch (ep.status) {
     case 'edited':
     case 'editing':
-      return 'editing';
     case 'video_ready':
     case 'complete':
-      return 'video';
+      return 'editing';
     case 'images_ready':
       return 'prompts';
     case 'beat_prompts_ready':
@@ -322,21 +321,16 @@ function stageUnlocked(target: Stage, ep: Episode | null, clips: Clip[]): boolea
         'storyboard_ready',
         'images_ready',
         'video_ready',
+        'editing',
+        'edited',
         'complete',
       ].includes(st)
     );
   }
-  if (target === 'video') {
-    return (
-      ['video_ready', 'edited', 'complete'].includes(st) ||
-      hasPlan ||
-      clips.some((c) => Boolean(c.videoUrl))
-    );
-  }
   if (target === 'editing') {
     return (
-      ['editing', 'edited', 'complete'].includes(st) ||
-      clips.some((c) => Boolean(c.editedVideoUrl))
+      ['video_ready', 'editing', 'edited', 'complete'].includes(st) ||
+      clips.some((c) => Boolean(c.videoUrl || c.editedVideoUrl))
     );
   }
   return false;
@@ -389,7 +383,6 @@ function isRunningTaskStatus(s: Task['status']): boolean {
 
 const TASK_POLL_MS = 2500;
 const NON_BLOCKING_TASK_TYPES = new Set<Task['type']>(['EXTRACT_VIDEO_FRAMES']);
-
 export default function ProjectPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
@@ -412,6 +405,7 @@ export default function ProjectPage() {
   const [subtitleText, setSubtitleText] = useState('');
   const [subtitlePosition, setSubtitlePosition] = useState<'top' | 'middle' | 'bottom'>('bottom');
   const [subtitleTargetClipId, setSubtitleTargetClipId] = useState<string | null>(null);
+  const [editingPreviewTargetId, setEditingPreviewTargetId] = useState<string | null>(null);
   const [subtitleTimelineByClip, setSubtitleTimelineByClip] = useState<Record<string, SubtitleCue[]>>({});
   const [subtitleEditorOpen, setSubtitleEditorOpen] = useState(false);
   const [subtitleEditorClipId, setSubtitleEditorClipId] = useState<string | null>(null);
@@ -726,7 +720,6 @@ export default function ProjectPage() {
       if (clipIds?.length === 1) {
         setVideoTaskIdsByClip((prev) => ({ ...prev, [clipIds[0]]: taskId }));
       }
-      setStage('video');
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '生成失败');
     }
@@ -999,6 +992,7 @@ export default function ProjectPage() {
   );
 
   const subtitleVideoClips = clips.filter((clip) => Boolean(clip.videoUrl));
+  const previewableVideoClips = clips.filter((clip) => Boolean(clip.editedVideoUrl || clip.videoUrl));
   const subtitleEditorCues = subtitleEditorClipId ? (subtitleTimelineByClip[subtitleEditorClipId] || []) : [];
 
   useEffect(() => {
@@ -1010,6 +1004,31 @@ export default function ProjectPage() {
       setSubtitleTargetClipId(subtitleVideoClips[0].clipId);
     }
   }, [subtitleTargetClipId, subtitleVideoClips]);
+
+  useEffect(() => {
+    if (subtitleMode === 'timeline' && subtitleTargetClipId && previewableVideoClips.some((clip) => clip.clipId === subtitleTargetClipId)) {
+      if (editingPreviewTargetId !== subtitleTargetClipId) setEditingPreviewTargetId(subtitleTargetClipId);
+      return;
+    }
+    if (previewableVideoClips.length === 0) {
+      if (editingPreviewTargetId !== null) setEditingPreviewTargetId(null);
+      return;
+    }
+    const isCurrentClipValid =
+      editingPreviewTargetId !== null
+      && previewableVideoClips.some((clip) => clip.clipId === editingPreviewTargetId);
+    if (isCurrentClipValid) return;
+    const preferredClipId =
+      subtitleTargetClipId && previewableVideoClips.some((clip) => clip.clipId === subtitleTargetClipId)
+        ? subtitleTargetClipId
+        : previewableVideoClips[0].clipId;
+    setEditingPreviewTargetId(preferredClipId);
+  }, [
+    editingPreviewTargetId,
+    previewableVideoClips,
+    subtitleMode,
+    subtitleTargetClipId,
+  ]);
 
   useEffect(() => {
     if (selectedCueIndex === null) return;
@@ -1061,6 +1080,29 @@ export default function ProjectPage() {
   const shouldShowCompiledPreview = subtitleMode !== 'timeline' && Boolean(activeEpisode?.compiledVideoUrl);
   const compiledPreviewUrl = shouldShowCompiledPreview ? activeEpisode?.compiledVideoUrl ?? undefined : undefined;
   const compiledSubtitleUrl = shouldShowCompiledPreview ? activeEpisode?.subtitleUrl ?? undefined : undefined;
+  const editingPreviewClip =
+    editingPreviewTargetId
+      ? previewableVideoClips.find((clip) => clip.clipId === editingPreviewTargetId) || null
+      : null;
+  const editingPreviewUrl = editingPreviewClip?.editedVideoUrl || editingPreviewClip?.videoUrl || null;
+  const editingPreviewSubtitleUrl = editingPreviewClip?.subtitleUrl || null;
+  const editingPreviewTitle = subtitleMode === 'timeline' && editingPreviewClip
+      ? `情节 ${editingPreviewClip.clipIndex + 1} 时间轴预览`
+    : editingPreviewClip
+      ? `当前剪辑预览 · 情节 ${editingPreviewClip.clipIndex + 1}`
+      : '当前剪辑预览';
+  const editingPreviewSummary =
+    editingPreviewClip
+      ? editingPreviewClip.summary
+      : hasEditReadyClips
+        ? '可预览素材准备中。'
+        : '暂无可预览视频。';
+  const editingPreviewHint =
+    subtitleMode === 'timeline'
+      ? '当前预览跟随时间轴编辑片段，便于校准字幕位置、节奏与文字动画。'
+      : editStrategy === 'compile'
+        ? '左侧固定显示当前情节片段；完整成片只在底部输出区查看。'
+        : '左侧主预览聚焦当前情节，便于先检查素材，再查看剪辑结果。';
 
   const reevaluateForModalScope = () => {
     const scopes =
@@ -1114,8 +1156,7 @@ export default function ProjectPage() {
                     input: '输入文本',
                     clips: '情节分析',
                     prompts: '视频 Prompt',
-                    video: '视频预览',
-                    editing: '最终视频',
+                    editing: '视频剪辑',
                   }[s]
                 }
               </span>
@@ -1355,10 +1396,15 @@ export default function ProjectPage() {
                   scope={promptsEvalScope}
                   onOpen={() => openEvaluationModal(promptsEvalScope)}
                 />
+                {hasEditReadyClips && (
+                  <button className="btn-ghost" onClick={() => goToStage('editing')}>
+                    进入视频剪辑 →
+                  </button>
+                )}
               </div>
             </div>
             <p className="stage-hint">
-              视觉资产库中，<strong>角色形象参考图必须为竖屏 {CHARACTER_REFERENCE_RATIO}</strong>（AI 生成与本地上传均遵守）；场景参考图比例跟随项目视频设置。当前流程会保留首帧 Prompt 和首帧图片生成，并直接使用首帧图、视频 Prompt 与参考图生成视频，不再单独走尾帧 Prompt。
+              视觉资产库中，<strong>角色形象参考图必须为竖屏 {CHARACTER_REFERENCE_RATIO}</strong>（AI 生成与本地上传均遵守）；场景参考图比例跟随项目视频设置。当前流程会保留首帧 Prompt 和首帧图片生成，并直接使用首帧图、视频 Prompt 与参考图生成视频。生成后的原始视频可直接在各情节卡片内播放，不再单独拆出“视频预览”阶段。
             </p>
             {hasBeatStoryboard && arkVideoBlockers.length > 0 ? (
               <p className="empty-hint">
@@ -1479,71 +1525,74 @@ export default function ProjectPage() {
           </div>
         )}
 
-        {/* ── 阶段4: 视频 ── */}
-        {stage === 'video' && (
-          <div className="stage-panel">
-            <div className="stage-header">
-              <h2>视频预览</h2>
-              <div className="header-actions">
-                <button className="btn-ghost" onClick={() => goToStage('prompts')}>← 返回 Prompt</button>
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={() => handleGenerateVideos(readyBeatVideoClipIds)}
-                  disabled={runningTasks.length > 0 || !hasReadyBeatVideoClips}
-                >
-                  {runningTasks.length > 0 ? '生成中...' : '🔄 重新生成视频'}
-                </button>
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={() => handleEditVideos()}
-                  disabled={runningTasks.length > 0 || !hasEditReadyClips}
-                >
-                  {runningTasks.length > 0 ? '剪辑中...' : '✂️ 视频剪辑'}
-                </button>
-              </div>
-            </div>
-            <p className="stage-hint">
-              使用当前方案的首帧图（由首帧 Prompt 生成）、视频 Prompt 与项目/情节参考图向 Ark 提交视频任务；顶部按钮会按当前已就绪情节提交生成。
-            </p>
-            <div className="video-clip-list">
-              {clips.map((clip) =>
-                clip.videoUrl ? (
-                  <div key={clip.clipId} className="video-clip-card">
-                    <h4 className="video-clip-title">
-                      情节 {clip.clipIndex + 1} · {clip.summary.slice(0, 40)}
-                      {clip.duration && <span className="clip-duration">⏱ {clip.duration}s</span>}
-                    </h4>
-                    <video src={clip.videoUrl} controls className="clip-video" playsInline />
-                  </div>
-                ) : null,
-              )}
-            </div>
-            {!clips.some((c) => c.videoUrl) && runningTasks.length === 0 ? (
-              <p className="empty-hint">
-                {hasReadyBeatVideoClips
-                  ? '暂无视频。当前已有可生成情节，点击「生成视频」即可。'
-                  : '暂无视频。请先生成首帧图片，再点击「生成视频」。'}
-              </p>
-            ) : null}
-          </div>
-        )}
-
-        {/* ── 阶段5: 视频剪辑 ── */}
+        {/* ── 阶段4: 视频剪辑 ── */}
         {stage === 'editing' && (
           <div className="stage-panel">
             <div className="stage-header">
-              <h2>最终视频</h2>
+              <h2>视频剪辑</h2>
               <div className="header-actions">
-                <button className="btn-ghost" onClick={() => goToStage('video')}>← 返回视频预览</button>
+                <button className="btn-ghost" onClick={() => goToStage('prompts')}>← 返回视频 Prompt</button>
               </div>
             </div>
             <p className="stage-hint">
-              视频剪辑与后处理的结果即为最终成片。支持单独编辑各情节或全集拼接，可选去人声、过渡特效等。
+              这里处理视频合并、逐情节剪辑、去人声、过渡与字幕；下方会展示对应的最终视频结果。
             </p>
             <div className="editing-studio-layout">
-              <section className="edit-options-panel edit-options-panel--rich">
+              <section className="editing-preview-panel">
+                <div className="editing-preview-head">
+                  <div>
+                    <p className="subtitle-panel-kicker">Preview Canvas</p>
+                    <h3>{editingPreviewTitle}</h3>
+                    <p className="compiled-video-hint">{editingPreviewHint}</p>
+                  </div>
+                  <div className="subtitle-pill-row">
+                    {editingPreviewClip?.editedVideoUrl ? (
+                      <span className="subtitle-stat-pill is-ok">已剪辑片段</span>
+                    ) : editingPreviewClip ? (
+                      <span className="subtitle-stat-pill">原始片段</span>
+                    ) : null}
+                    {editingPreviewClip?.duration ? (
+                      <span className="subtitle-stat-pill">{editingPreviewClip.duration}s</span>
+                    ) : null}
+                    {subtitleMode === 'timeline' && editingPreviewClip ? (
+                      <span className={`subtitle-stat-pill ${(subtitleTimelineByClip[editingPreviewClip.clipId] || []).length > 0 ? 'is-ok' : ''}`}>
+                        {(subtitleTimelineByClip[editingPreviewClip.clipId] || []).length} 条字幕
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="editing-preview-summary">
+                  <strong>
+                    {editingPreviewClip?.editedVideoUrl
+                      ? `已剪辑 · 情节 ${editingPreviewClip.clipIndex + 1}`
+                      : editingPreviewClip
+                        ? `待剪辑 · 情节 ${editingPreviewClip.clipIndex + 1}`
+                        : '等待素材'}
+                  </strong>
+                  <span>{editingPreviewSummary}</span>
+                </div>
+
+                {editingPreviewUrl ? (
+                  <div className="editing-preview-player-wrap">
+                    <video controls className="editing-preview-video" playsInline>
+                      <source src={editingPreviewUrl} />
+                      {editingPreviewSubtitleUrl ? (
+                        <track kind="captions" src={editingPreviewSubtitleUrl} srcLang="zh" label="中文字幕" default />
+                      ) : null}
+                    </video>
+                  </div>
+                ) : (
+                  <p className="empty-hint">
+                    {hasEditReadyClips
+                      ? '暂无可预览结果。点击「开始剪辑」后，这里会先展示当前情节的片段结果。'
+                      : '暂无可编辑视频。请先生成视频。'}
+                  </p>
+                )}
+
+              </section>
+
+              <aside className="edit-options-panel edit-options-panel--rich editing-controls-sidebar">
                 <div className="subtitle-panel-head">
                   <div>
                     <p className="subtitle-panel-kicker">Post Edit Suite</p>
@@ -1735,62 +1784,96 @@ export default function ProjectPage() {
                     {runningTasks.length > 0 ? '处理中...' : '✂️ 开始剪辑'}
                   </button>
                 </div>
-              </section>
-
-              <div className="edited-video-list edited-video-list--studio">
-                {shouldShowCompiledPreview ? (
-                  <div className="compiled-video-card">
-                    <h3 className="compiled-video-title">
-                      📹 完整成片
-                    </h3>
-                    <p className="compiled-video-hint">全集拼接后的最终视频</p>
-                    <video controls className="clip-video compiled-video" playsInline>
-                      <source src={compiledPreviewUrl} />
-                      {compiledSubtitleUrl ? (
-                        <track kind="captions" src={compiledSubtitleUrl} srcLang="zh" label="中文字幕" default />
-                      ) : null}
-                    </video>
-                  </div>
-                ) : clips.some((c) => c.editedVideoUrl || c.videoUrl) ? (
-                  <div>
-                    <h3 className="individual-videos-title">
-                      {subtitleMode === 'timeline' ? '时间轴字幕结果预览' : editStrategy === 'compile' ? '等待完整成片生成...' : '已剪辑情节'}
-                    </h3>
-                    {subtitleMode === 'timeline' && activeEpisode?.compiledVideoUrl ? (
-                      <p className="compiled-video-hint">当前展示的是逐情节输出；旧的整集成片不会自动覆盖。</p>
-                    ) : null}
-                    <div className="edited-video-grid">
-                      {clips.map((clip) => {
-                        const isFinal = Boolean(clip.editedVideoUrl);
-                        const url = clip.editedVideoUrl || clip.videoUrl;
-                        if (!url) return null;
-                        return (
-                          <div key={clip.clipId} className="edited-video-card">
-                            <h4 className="video-clip-title">
-                              情节 {clip.clipIndex + 1} · {clip.summary.slice(0, 40)}
-                              {isFinal && <span className="final-video-badge">已剪辑</span>}
-                              {clip.duration && <span className="clip-duration">⏱ {clip.duration}s</span>}
-                            </h4>
-                            <video controls className="clip-video" playsInline>
-                              <source src={url} />
-                              {clip.subtitleUrl ? (
-                                <track kind="captions" src={clip.subtitleUrl} srcLang="zh" label="中文字幕" default />
-                              ) : null}
-                            </video>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ) : (
-                  <p className="empty-hint">
-                    {hasEditReadyClips
-                      ? '暂无最终视频。点击「开始剪辑」即可生成。'
-                      : '暂无可编辑视频。请先生成视频。'}
-                  </p>
-                )}
-              </div>
+              </aside>
             </div>
+
+            {(shouldShowCompiledPreview || previewableVideoClips.length > 0) && (
+              <section className="edited-video-list edited-video-list--studio editing-output-library">
+                <div className="subtitle-panel-head">
+                  <div>
+                    <p className="subtitle-panel-kicker">Output Library</p>
+                    <h3>{shouldShowCompiledPreview ? '剪辑输出结果' : '片段素材与剪辑结果'}</h3>
+                    <p className="compiled-video-hint">
+                      {shouldShowCompiledPreview
+                        ? '这里汇总剪辑与字幕处理后的输出，完整成片固定放在底部查看。'
+                        : '剪辑完成前，这里先展示各片段素材；完整成片生成后也会出现在这里。'}
+                    </p>
+                  </div>
+                  <div className="subtitle-pill-row">
+                    {shouldShowCompiledPreview ? <span className="subtitle-stat-pill is-ok">含完整成片</span> : null}
+                    <span className="subtitle-stat-pill">{previewableVideoClips.length} 段片段</span>
+                  </div>
+                </div>
+
+                <div className="editing-output-grid">
+                  {previewableVideoClips.map((clip) => {
+                    const isFinal = Boolean(clip.editedVideoUrl);
+                    const url = clip.editedVideoUrl || clip.videoUrl;
+                    if (!url) return null;
+                    const cueCount = (subtitleTimelineByClip[clip.clipId] || []).length;
+                    return (
+                      <div
+                        key={clip.clipId}
+                        className={`edited-video-card editing-output-card ${editingPreviewClip?.clipId === clip.clipId ? 'selected' : ''}`}
+                      >
+                        <div className="editing-output-card-head">
+                          <h4 className="video-clip-title">
+                            情节 {clip.clipIndex + 1} · {clip.summary.slice(0, 40)}
+                            {isFinal && <span className="final-video-badge">已剪辑</span>}
+                            {clip.duration && <span className="clip-duration">⏱ {clip.duration}s</span>}
+                          </h4>
+                          <div className="editing-output-card-actions">
+                            <button className="btn-ghost btn-small" onClick={() => setEditingPreviewTargetId(clip.clipId)}>
+                              设为主预览
+                            </button>
+                            {subtitleMode === 'timeline' ? (
+                              <button
+                                className="btn-ghost btn-small"
+                                onClick={() => {
+                                  setSubtitleTargetClipId(clip.clipId);
+                                  openSubtitleEditor(clip);
+                                }}
+                                disabled={runningTasks.length > 0}
+                              >
+                                编辑字幕
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className="subtitle-pill-row">
+                          <span className={`subtitle-stat-pill ${cueCount > 0 ? 'is-ok' : ''}`}>{cueCount} 条字幕</span>
+                          {subtitleTargetClipId === clip.clipId ? <span className="subtitle-stat-pill">当前编辑目标</span> : null}
+                        </div>
+                        <video controls className="clip-video" playsInline preload="metadata">
+                          <source src={url} />
+                          {clip.subtitleUrl ? (
+                            <track kind="captions" src={clip.subtitleUrl} srcLang="zh" label="中文字幕" default />
+                          ) : null}
+                        </video>
+                      </div>
+                    );
+                  })}
+
+                  {shouldShowCompiledPreview && compiledPreviewUrl ? (
+                    <div className="edited-video-card editing-output-card">
+                      <div className="editing-output-card-head">
+                        <h4 className="video-clip-title">
+                          完整成片
+                          <span className="final-video-badge">最终输出</span>
+                        </h4>
+                      </div>
+                      <p className="compiled-video-hint">全集拼接后的最终视频，适合检查整体节奏与成片观感。</p>
+                      <video controls className="clip-video" playsInline preload="metadata">
+                        <source src={compiledPreviewUrl} />
+                        {compiledSubtitleUrl ? (
+                          <track kind="captions" src={compiledSubtitleUrl} srcLang="zh" label="中文字幕" default />
+                        ) : null}
+                      </video>
+                    </div>
+                  ) : null}
+                </div>
+              </section>
+            )}
           </div>
         )}
       </div>
