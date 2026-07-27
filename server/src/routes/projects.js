@@ -152,6 +152,8 @@ function signClipMedia(clip) {
   return {
     ...clip,
     videoUrl: signUrlValue(clip.videoUrl),
+    editedVideoUrl: signUrlValue(clip.editedVideoUrl),
+    subtitleUrl: signUrlValue(clip.subtitleUrl),
     storyboardPlan: signStoryboardPlan(clip.storyboardPlan),
     panels: Array.isArray(clip.panels) ? clip.panels.map(signPanelMedia) : clip.panels,
     referenceOverrides: overrides
@@ -161,6 +163,15 @@ function signClipMedia(clip) {
         characterImages: signUrlMap(overrides.characterImages),
       }
       : overrides,
+  };
+}
+
+function signEpisodeMedia(episode) {
+  if (!episode || typeof episode !== 'object') return episode;
+  return {
+    ...episode,
+    compiledVideoUrl: signUrlValue(episode.compiledVideoUrl),
+    subtitleUrl: signUrlValue(episode.subtitleUrl),
   };
 }
 
@@ -180,6 +191,7 @@ function signProjectMedia(project) {
         referenceImageUrl: signUrlValue(location?.referenceImageUrl),
       }))
       : project.locations,
+    episodes: Array.isArray(project.episodes) ? project.episodes.map(signEpisodeMedia) : project.episodes,
   };
 }
 
@@ -701,7 +713,7 @@ router.get('/:projectId/episodes', async (req, res) => {
       .sort({ episodeNumber: 1 })
       .toArray();
 
-    res.json({ success: true, episodes });
+    res.json({ success: true, episodes: episodes.map(signEpisodeMedia) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
